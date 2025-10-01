@@ -9,8 +9,14 @@ HCO-Phone-Finder (single-file)
 - Optional Telegram & email alerts (configure via ENV vars)
 Author: Azhar
 """
-import os, json, csv, uuid, datetime, functools, traceback
-from flask import Flask, request, jsonify, render_template_string, Response, url_for
+import os
+import json
+import csv
+import uuid
+import datetime
+import functools
+import traceback
+from flask import Flask, request, jsonify, Response, url_for
 
 app = Flask(__name__)
 
@@ -132,7 +138,6 @@ def alert_email(subject, body):
         return False
 
 # Basic auth decorator
-import functools
 def require_auth(f):
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
@@ -159,14 +164,14 @@ def info():
 @require_auth
 def owner_ui():
     base = request.url_root.rstrip("/")
-    html = f"""
+    html = """
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>HCO Owner</title></head><body style="font-family:system-ui">
 <h2>HCO-Phone-Finder — Owner UI</h2>
 <p>Create token: <code>{base}/new?label=AzharPixel</code></p>
 <p>List tokens: <a href="/tokens">/tokens</a></p>
 <p>View logs: <a href="/logs">/logs</a></p>
 </body></html>
-"""
+""".replace("{base}", base)
     return html
 
 @app.route("/new")
@@ -188,7 +193,8 @@ def serve_token(token):
     if token not in toks:
         return "Invalid token", 404
     label = toks[token].get("label","device")
-    html = f"""
+    # HTML template uses double braces for literal JS/JSON braces so .format() works safely
+    html_template = """
 <!doctype html>
 <html>
 <head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -205,44 +211,45 @@ def serve_token(token):
 
 <script>
 const token = "{token}";
-function gather(){
-  try{
-    const fp = {
+function gather(){{
+  try{{
+    const fp = {{
       ts: new Date().toISOString(),
       ua: navigator.userAgent || "",
       platform: navigator.platform || "",
       language: navigator.language || "",
       languages: navigator.languages || [],
-      screen: {w: screen.width, h: screen.height},
-      connection: (navigator.connection ? {{type: navigator.connection.effectiveType || navigator.connection.type, downlink: navigator.connection.downlink, rtt: navigator.connection.rtt}} : {}),
+      screen: {{w: screen.width, h: screen.height}},
+      connection: (navigator.connection ? {{type: navigator.connection.effectiveType || navigator.connection.type, downlink: navigator.connection.downlink, rtt: navigator.connection.rtt}} : {{}}),
       battery: null
-    };
-    if (navigator.getBattery){
-      navigator.getBattery().then(b=>{
+    }};
+    if (navigator.getBattery){{
+      navigator.getBattery().then(b=>{{
         fp.battery = {{charging: b.charging, level: b.level}};
         send(fp);
-      }).catch(e=>{{ send(fp); }});
-    } else {
+      }}).catch(e=>{{ send(fp); }});
+    }} else {{
       send(fp);
-    }
-  }catch(e){
+    }}
+  }}catch(e){{
     send({{error: String(e)}});
-  }
-}
+  }}
+}}
 
-function send(fp){
+function send(fp){{
   fetch("/report", {{method:"POST", headers:{{"Content-Type":"application/json"}}, body: JSON.stringify({{token:token, fingerprint: fp}})}})
-    .then(r=>r.json()).then(j=>{
+    .then(r=>r.json()).then(j=>{{
       document.getElementById("not").innerText = "yes";
-    }).catch(e=>{
+    }}).catch(e=>{{
       document.getElementById("not").innerText = "error";
-    });
-}
+    }});
+}}
 
-window.addEventListener("load", function(){ setTimeout(gather, 400); });
+window.addEventListener("load", function(){{ setTimeout(gather, 400); }});
 </script>
 </body></html>
 """
+    html = html_template.format(token=token, label=label)
     return html
 
 @app.route("/report", methods=["POST"])
@@ -260,7 +267,13 @@ def report():
     ipinfo = ip_enrich(ip)
     fp = data.get("fingerprint", {})
     # small summary of fingerprint to include in CSV
-    fp_summary = f"{fp.get('platform','') or ''} | {fp.get('ua','') or ''}"
+    try:
+        pf_platform = fp.get("platform","")
+        pf_ua = fp.get("ua","")
+    except:
+        pf_platform = ""
+        pf_ua = ""
+    fp_summary = f"{pf_platform} | {pf_ua}"
     entry = {
         "timestamp": ts,
         "token": token,
