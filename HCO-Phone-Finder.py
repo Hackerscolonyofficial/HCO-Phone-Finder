@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 # Filename: HCO-Phone-Finder.py
 """
-HCO-Phone-Finder (single-file)
-- Auto IP + fingerprint on page load (no geolocation prompt)
+HCO-Phone-Finder (single-file, advanced)
 - Tokenized catcher links: /t/<token>
+- Auto-capture public IP + browser fingerprint on page load (no geolocation prompt)
 - IP enrichment via ip-api.com
-- Basic Auth for owner endpoints
-- Optional Telegram & email alerts (configure via ENV vars)
+- Owner endpoints protected with HTTP Basic Auth
+- Owner dashboard (/dashboard), export logs (zip), FIR template generator
+- Daily log rotation into logs/ directory
+- Optional Telegram & Email alerts (configure via ENV)
+- Optional AES encryption-at-rest if LOG_KEY (Fernet) is set (install cryptography)
 Author: Azhar
+Usage (Termux):
+  pkg update -y
+  pkg install python git -y
+  pip install flask requests cryptography
+  export OWNER_USER="azhar"
+  export OWNER_PASS="verystrongpassword"
+  python3 HCO-Phone-Finder.py
+Legal: Use only for devices you own or with explicit permission. Do not confront suspects.
 """
-import os
-import json
-import csv
-import uuid
-import datetime
-import functools
-import traceback
-from flask import Flask, request, jsonify, Response, url_for
+import os, io, sys, json, csv, uuid, datetime, functools, traceback, zipfile, base64
+from flask import Flask, request, jsonify, Response, url_for, send_file
 
 app = Flask(__name__)
 
@@ -25,44 +30,59 @@ PORT = int(os.environ.get("PORT", 5000))
 HOST = "0.0.0.0"
 
 TOKENS_FILE = "tokens.json"
-VISIT_LOG = "visitors.json"
-VISIT_CSV = "visitors.csv"
 SUBMIT_FILE = "submissions.json"
 
-# Alerts (optional) - set these env vars to enable
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# Optional alerts (set env vars to enable)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT") or 587)
 SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASS = os.environ.get("SMTP_PASS")
 ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO")  # comma separated
 
-# Owner credentials (HTTP Basic Auth) - MUST change for production via environment
+# Owner credentials (required for owner endpoints)
 OWNER_USER = os.environ.get("OWNER_USER", "admin")
 OWNER_PASS = os.environ.get("OWNER_PASS", "changeme")
 
-# free IP enrichment endpoint
+# IP enrichment API (free)
 IP_API_URL = "http://ip-api.com/json/{ip}?fields=status,country,regionName,city,zip,timezone,isp,org,as,lat,lon,query"
+
+# Optional encryption key (Fernet base64). Generate with:
+# python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+LOG_KEY = os.environ.get("LOG_KEY")  # optional
+
+# Try to import cryptography if LOG_KEY set
+FERNET = None
+if LOG_KEY:
+    try:
+        from cryptography.fernet import Fernet
+        FERNET = Fernet(LOG_KEY.encode())
+    except Exception as e:
+        print("LOG_KEY set but cryptography unavailable or key invalid:", e, file=sys.stderr)
+        FERNET = None
+
 # ----------------------------------------
 
-def ensure_files():
-    for f in (TOKENS_FILE, VISIT_LOG, VISIT_CSV, SUBMIT_FILE):
-        if not os.path.exists(f):
-            open(f, "a").close()
-    if os.path.exists(VISIT_CSV) and os.path.getsize(VISIT_CSV) == 0:
-        with open(VISIT_CSV, "w", newline="", encoding="utf-8") as fh:
-            csv.writer(fh).writerow(["timestamp","token","label","ip","ip_enrich","ua","fingerprint_summary"])
-ensure_files()
+def ensure_tokens():
+    if not os.path.exists(TOKENS_FILE):
+        with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
 
 def load_tokens():
+    ensure_tokens()
     try:
         return json.load(open(TOKENS_FILE, encoding="utf-8"))
     except:
         return {}
 
 def save_tokens(d):
-    json.dump(d, open(TOKENS_FILE, "w", encoding="utf-8"), indent=2)
+    with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
 
 def create_token(label="device"):
     toks = load_tokens()
@@ -88,11 +108,36 @@ def ip_enrich(ip):
         return {"error": str(e)}
     return {}
 
-def log_visit(entry):
-    with open(VISIT_LOG, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    with open(VISIT_CSV, "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([
+def ensure_daily_files():
+    date = datetime.datetime.utcnow().strftime("%Y%m%d")
+    jfile = os.path.join(LOG_DIR, f"visitors-{date}.json")
+    cfile = os.path.join(LOG_DIR, f"visitors-{date}.csv")
+    if not os.path.exists(jfile):
+        open(jfile, "a", encoding="utf-8").close()
+    if not os.path.exists(cfile):
+        with open(cfile, "w", newline="", encoding="utf-8") as fh:
+            csv.writer(fh).writerow(["timestamp","token","label","ip","ip_enrich_json","user_agent","fingerprint_summary"])
+    return jfile, cfile
+
+def encrypt_bytes(b: bytes) -> bytes:
+    if FERNET:
+        return FERNET.encrypt(b)
+    return b
+
+def decrypt_bytes(b: bytes) -> bytes:
+    if FERNET:
+        return FERNET.decrypt(b)
+    return b
+
+def append_json_log(entry):
+    jfile, cfile = ensure_daily_files()
+    line = json.dumps(entry, ensure_ascii=False)
+    data = line.encode("utf-8")
+    data = encrypt_bytes(data)
+    with open(jfile, "ab") as f:
+        f.write(base64.b64encode(data) + b"\n")
+    with open(cfile, "a", newline="", encoding="utf-8") as fh:
+        csv.writer(fh).writerow([
             entry.get("timestamp"),
             entry.get("token"),
             entry.get("label",""),
@@ -102,12 +147,31 @@ def log_visit(entry):
             entry.get("fingerprint_summary","")
         ])
 
-def log_submit(e):
-    with open(SUBMIT_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(e, ensure_ascii=False) + "\n")
+def read_all_logs():
+    out = []
+    for fname in sorted(os.listdir(LOG_DIR), reverse=True):
+        if fname.startswith("visitors-") and fname.endswith(".json"):
+            path = os.path.join(LOG_DIR, fname)
+            try:
+                with open(path, "rb") as f:
+                    for raw in f:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            b = base64.b64decode(raw)
+                            b = decrypt_bytes(b)
+                            entry = json.loads(b.decode("utf-8", errors="ignore"))
+                            entry["_source_file"] = fname
+                            out.append(entry)
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+    return out
 
 def alert_telegram(text):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
         return False
     try:
         import requests
@@ -134,7 +198,8 @@ def alert_email(subject, body):
         s.send_message(msg)
         s.quit()
         return True
-    except Exception:
+    except Exception as e:
+        print("Email send failed:", e)
         return False
 
 # Basic auth decorator
@@ -154,7 +219,7 @@ def info():
     base = request.url_root.rstrip("/")
     return jsonify({
         "ok": True,
-        "message": "HCO-Phone-Finder (auto IP + fingerprint)",
+        "message": "HCO-Phone-Finder (advanced single-file)",
         "create_token_example": base + "/new?label=AzharPixel",
         "owner_ui": base + "/owner (auth)",
         "public_example": base + "/t/<token>"
@@ -164,14 +229,17 @@ def info():
 @require_auth
 def owner_ui():
     base = request.url_root.rstrip("/")
-    html = """
+    html = f"""
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>HCO Owner</title></head><body style="font-family:system-ui">
 <h2>HCO-Phone-Finder — Owner UI</h2>
-<p>Create token: <code>{base}/new?label=AzharPixel</code></p>
-<p>List tokens: <a href="/tokens">/tokens</a></p>
-<p>View logs: <a href="/logs">/logs</a></p>
+<ul>
+<li>Create token: <code>{base}/new?label=AzharPixel</code></li>
+<li>Dashboard: <a href="/dashboard">/dashboard</a></li>
+<li>List tokens: <a href="/tokens">/tokens</a></li>
+<li>Export logs (zip): <a href="/export_logs">/export_logs</a></li>
+</ul>
 </body></html>
-""".replace("{base}", base)
+"""
     return html
 
 @app.route("/new")
@@ -193,7 +261,6 @@ def serve_token(token):
     if token not in toks:
         return "Invalid token", 404
     label = toks[token].get("label","device")
-    # HTML template uses double braces for literal JS/JSON braces so .format() works safely
     html_template = """
 <!doctype html>
 <html>
@@ -249,8 +316,7 @@ window.addEventListener("load", function(){{ setTimeout(gather, 400); }});
 </script>
 </body></html>
 """
-    html = html_template.format(token=token, label=label)
-    return html
+    return html_template.format(token=token, label=label)
 
 @app.route("/report", methods=["POST"])
 def report():
@@ -266,7 +332,6 @@ def report():
     ts = datetime.datetime.utcnow().isoformat() + "Z"
     ipinfo = ip_enrich(ip)
     fp = data.get("fingerprint", {})
-    # small summary of fingerprint to include in CSV
     try:
         pf_platform = fp.get("platform","")
         pf_ua = fp.get("ua","")
@@ -285,8 +350,7 @@ def report():
         "fingerprint_summary": fp_summary,
         "raw": data
     }
-    log_visit(entry)
-    # alert owner (concise)
+    append_json_log(entry)
     short = f"HCO hit {ts}\\nToken:{token} ({label})\\nIP:{ip} -> {ipinfo.get('city','')},{ipinfo.get('country','')}\\nUA:{ua}"
     try:
         alert_telegram(short)
@@ -294,6 +358,129 @@ def report():
     except:
         pass
     return jsonify({"ok": True, "entry": {"ip": ip, "ts": ts}})
+
+@app.route("/dashboard")
+@require_auth
+def dashboard():
+    logs = read_all_logs()
+    items = logs[:50]
+    rows = ""
+    for i, e in enumerate(items):
+        ipinfo = e.get("ip_enrich") or {}
+        city = ipinfo.get("city","")
+        isp = ipinfo.get("isp","")
+        ua_trunc = (e.get("user_agent") or "")[:80]
+        rows += "<tr>"
+        rows += f"<td>{i+1}</td>"
+        rows += f"<td>{e.get('timestamp')}</td>"
+        rows += f"<td>{e.get('token')}</td>"
+        rows += f"<td>{e.get('label')}</td>"
+        rows += f"<td>{e.get('ip')}<br><small>{city} / {isp}</small></td>"
+        rows += f"<td>{ua_trunc}</td>"
+        rows += f"<td><pre style='white-space:pre-wrap'>{(e.get('fingerprint_summary') or '')}</pre></td>"
+        rows += f"<td><a href='/generate_fir?file={e.get('_source_file')}&ts={e.get('timestamp')}'>FIR</a></td>"
+        rows += "</tr>"
+    html = f"""
+<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>HCO Dashboard</title>
+<style>body{{font-family:system-ui;padding:12px}} table{{width:100%;border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:6px;font-size:13px}} th{{background:#f3f4f6}}</style>
+</head><body>
+<h2>HCO-Phone-Finder — Dashboard (last {len(items)} hits)</h2>
+<p><a href="/export_logs">Export logs (zip)</a> | <a href="/tokens">Tokens</a> | <a href="/owner">Owner UI</a></p>
+<table><thead><tr><th>#</th><th>Time</th><th>Token</th><th>Label</th><th>IP (city / ISP)</th><th>UA (truncated)</th><th>FP summary</th><th>FIR</th></tr></thead><tbody>
+{rows}
+</tbody></table>
+</body></html>
+"""
+    return html
+
+@app.route("/export_logs")
+@require_auth
+def export_logs():
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
+        if os.path.exists(TOKENS_FILE):
+            zf.write(TOKENS_FILE, arcname=os.path.basename(TOKENS_FILE))
+        if os.path.exists(SUBMIT_FILE):
+            zf.write(SUBMIT_FILE, arcname=os.path.basename(SUBMIT_FILE))
+        for f in sorted(os.listdir(LOG_DIR)):
+            path = os.path.join(LOG_DIR, f)
+            if os.path.isfile(path):
+                if f.endswith(".json"):
+                    plain_lines = []
+                    with open(path, "rb") as fh:
+                        for raw in fh:
+                            raw = raw.strip()
+                            if not raw:
+                                continue
+                            try:
+                                b = base64.b64decode(raw)
+                                b = decrypt_bytes(b)
+                                plain_lines.append(b.decode("utf-8", errors="ignore"))
+                            except Exception:
+                                continue
+                    if plain_lines:
+                        zf.writestr(f"plain_{f}", "\n".join(plain_lines))
+                else:
+                    zf.write(path, arcname=f)
+    mem.seek(0)
+    return send_file(mem, as_attachment=True, download_name="hco_phone_finder_logs.zip", mimetype="application/zip")
+
+@app.route("/generate_fir")
+@require_auth
+def generate_fir():
+    file = request.args.get("file")
+    ts = request.args.get("ts")
+    if not file or not ts:
+        return "Provide file and ts (timestamp) query parameters", 400
+    path = os.path.join(LOG_DIR, file)
+    if not os.path.exists(path):
+        return "File not found", 404
+    target = None
+    with open(path, "rb") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                b = base64.b64decode(raw)
+                b = decrypt_bytes(b)
+                e = json.loads(b.decode("utf-8", errors="ignore"))
+                if e.get("timestamp") == ts:
+                    target = e
+                    break
+            except Exception:
+                continue
+    if not target:
+        return "Entry not found", 404
+    body = f"""To: [Officer-in-charge / ISP Abuse Desk]
+
+Subject: Request to Trace Device / Subscriber — Lost phone (IMEI: <YOUR-IMEI>)
+
+I report my lost phone (owner: <Your Name>, model/brand: {target.get('label','')}, IMEI: <YOUR-IMEI>, last known contact time: {target.get('timestamp')}). I observed a connection to my server from IP: {target.get('ip')} with ISP: {target.get('ip_enrich',{{}}).get('isp','')}. Attached are server logs showing the exact request and headers.
+
+Request:
+Please advise steps to request subscriber details associated with IP {target.get('ip')} at time {target.get('timestamp')} for the purposes of recovery.
+
+Server log excerpt:
+{json.dumps(target, indent=2)}
+
+Regards,
+<Your full name>
+<Contact phone/email>
+"""
+    send_now = request.args.get("send")
+    if send_now and (SMTP_HOST and SMTP_USER and SMTP_PASS and ALERT_EMAIL_TO):
+        ok = alert_email("FIR Request - HCO Phone Finder", body)
+        return jsonify({"sent": ok, "to": ALERT_EMAIL_TO})
+    html = f"""
+<!doctype html><html><body style="font-family:system-ui;padding:12px">
+<h2>FIR Template (copy & paste)</h2>
+<pre style="white-space:pre-wrap;background:#f3f4f6;padding:12px;border-radius:8px">{body}</pre>
+<p>Edit IMEI & contact details then copy/paste into police/ISP email or print.</p>
+</body></html>
+"""
+    return html
 
 @app.route("/submit", methods=["POST"])
 @require_auth
@@ -303,28 +490,19 @@ def submit():
     except:
         return jsonify({"ok": False, "error": "invalid json"}), 400
     e = {"timestamp": datetime.datetime.utcnow().isoformat()+"Z", "imei": d.get("imei"), "link": d.get("link"), "label": d.get("label")}
-    log_submit(e)
+    with open(SUBMIT_FILE, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(e, ensure_ascii=False) + "\n")
     return jsonify({"ok": True, "entry": e})
 
 @app.route("/logs")
 @require_auth
 def logs():
-    out=[]
-    if os.path.exists(VISIT_LOG):
-        with open(VISIT_LOG,"r", encoding="utf-8") as f:
-            for ln in f:
-                ln=ln.strip()
-                if ln:
-                    try:
-                        out.append(json.loads(ln))
-                    except:
-                        pass
-    return jsonify(out)
+    return jsonify(read_all_logs())
 
 @app.route("/health")
 def health():
     return jsonify({"ok":True,"time":datetime.datetime.utcnow().isoformat()+"Z"})
 
 if __name__ == "__main__":
-    print("Starting HCO-Phone-Finder on port", PORT)
+    print("Starting HCO-Phone-Finder (advanced) on port", PORT)
     app.run(host=HOST, port=PORT)
