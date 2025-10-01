@@ -1,284 +1,369 @@
 #!/usr/bin/env python3
-# Filename: HCO-Phone-Finder.py
-"""
-HCO Phone Finder - Termux-friendly launcher with automatic Cloudflared startup
-- Glitchy countdown lock + redirects to YouTube (termux-open-url / am / webbrowser)
-- Attempts to auto-run cloudflared tunnel and capture the public URL
-- Shows blue box with red HCO Phone Finder banner and the auto-found Cloudflare URL
-- Best-effort: will try `pkg install cloudflared -y` if cloudflared binary missing (Termux)
-Author: Azhar
-"""
-import os
-import sys
-import time
-import random
-import re
-import subprocess
-import shutil
-import webbrowser
-from shutil import which
+# HCO-Phone-Finder.py
+# Single-file, simple, ready for GitHub + Termux
+# - run Flask server, create token links, capture IP + fingerprint on page load
+# - owner endpoints with Basic Auth: /new, /tokens, /logs, /dashboard
+# - store logs rotated daily in logs/
+# - launcher: hacker-style countdown, open YouTube (termux-friendly), show banner + public URL if CLOUDFLARE_URL env var set
+# Author: Azhar (packaged by assistant)
+# Legal: Use only for devices you own or with explicit permission.
 
-# colorama (optional fallback)
+import os, sys, json, csv, uuid, datetime, functools, time, random, subprocess, socket
+from flask import Flask, request, jsonify, Response, url_for
+
+# try optional libs
 try:
-    from colorama import init as _colorama_init, Fore, Back, Style
-    _colorama_init(autoreset=True)
+    import requests
 except Exception:
-    class _Fake:
-        RESET_ALL = BRIGHT = ""
-    class _F:
-        RED = GREEN = YELLOW = MAGENTA = CYAN = ""
-    class _B:
-        BLUE = ""
-    Fore = _F(); Back = _B(); Style = _Fake()
+    requests = None
 
-# Config
+try:
+    from colorama import init as colorama_init, Fore, Back, Style
+    colorama_init(autoreset=True)
+except Exception:
+    class _F: RED=GREEN=YELLOW=CYAN=MAGENTA=""
+    class _B: BLUE=""
+    class _S: BRIGHT=RESET_ALL=""
+    Fore=_F(); Back=_B(); Style=_S()
+
+app = Flask(__name__)
+
+# ---------- CONFIG ----------
+PORT = int(os.environ.get("PORT", 5000))
+HOST = "0.0.0.0"
+
+TOKENS_FILE = "tokens.json"
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+OWNER_USER = os.environ.get("OWNER_USER", "admin")
+OWNER_PASS = os.environ.get("OWNER_PASS", "changeme")
+
+IP_API = "http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,lat,lon,query"
+# optional public URL environment variable (set after starting your tunnel)
+CLOUDFLARE_URL = os.environ.get("CLOUDFLARE_URL")  # set this to your public tunnel URL if you have one
 YOUTUBE_LINK = os.environ.get("HCO_YOUTUBE", "https://youtube.com/@hackers_colony_tech?si=pvdCWZggTIuGb0ya")
-CLOUDFLARE_ENV = "CLOUDFLARE_URL"
-CLOUDFLARE_URL = os.environ.get(CLOUDFLARE_ENV)  # may be None
-CLOUDFLARE_CMD = ["cloudflared", "tunnel", "--url", "http://127.0.0.1:5000"]
+# ----------------------------
 
-CLOUDFLARE_PROCESS = None
+def ensure_tokens():
+    if not os.path.exists(TOKENS_FILE):
+        with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f)
 
-def clear():
-    os.system("clear" if os.name != "nt" else "cls")
+def load_tokens():
+    ensure_tokens()
+    try:
+        return json.load(open(TOKENS_FILE, encoding="utf-8"))
+    except:
+        return {}
 
-def glitch_line(text, width=66):
-    noise = "".join(random.choice("~!@#$%^&*()_+<>?/\\|") for _ in range(random.randint(0,6)))
-    s = text
-    if len(s) > width:
-        s = s[:width]
-    return f"{s} {noise}"
+def save_tokens(d):
+    with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
 
-def hacker_countdown():
-    seq = list(range(9, 0, -1))
-    clear()
-    print(Fore.YELLOW + Style.BRIGHT + "="*66)
-    print(Fore.RED + Style.BRIGHT + "  SUBSCRIBE TO UNLOCK HCO PHONE FINDER".center(66))
-    print(Fore.YELLOW + Style.BRIGHT + "="*66 + "\n")
+def create_token(label="device"):
+    toks = load_tokens()
+    token = uuid.uuid4().hex[:10]
+    toks[token] = {"label": label, "created": datetime.datetime.utcnow().isoformat()+"Z"}
+    save_tokens(toks)
+    return token
+
+def client_ip(req):
+    for h in ("X-Forwarded-For","X-Real-IP","CF-Connecting-IP"):
+        v = req.headers.get(h)
+        if v:
+            return v.split(",")[0].strip()
+    return req.remote_addr
+
+def enrich_ip(ip):
+    if not requests:
+        return {"note": "requests not installed"}
+    try:
+        r = requests.get(IP_API.format(ip=ip), timeout=5)
+        if r.ok:
+            return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+    return {}
+
+def ensure_daily_files():
+    date = datetime.datetime.utcnow().strftime("%Y%m%d")
+    jfile = os.path.join(LOG_DIR, f"visitors-{date}.json")
+    cfile = os.path.join(LOG_DIR, f"visitors-{date}.csv")
+    if not os.path.exists(jfile):
+        open(jfile, "a", encoding="utf-8").close()
+    if not os.path.exists(cfile):
+        with open(cfile, "w", newline="", encoding="utf-8") as fh:
+            csv.writer(fh).writerow(["timestamp","token","label","ip","ip_enrich","ua","fp_summary"])
+    return jfile, cfile
+
+def append_log(entry):
+    jfile, cfile = ensure_daily_files()
+    with open(jfile, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    with open(cfile, "a", newline="", encoding="utf-8") as fh:
+        csv.writer(fh).writerow([
+            entry.get("timestamp"),
+            entry.get("token"),
+            entry.get("label",""),
+            entry.get("ip",""),
+            json.dumps(entry.get("ip_enrich","{}"), ensure_ascii=False),
+            entry.get("user_agent",""),
+            entry.get("fingerprint_summary","")
+        ])
+
+# Basic Auth decorator
+def require_auth(f):
+    @functools.wraps(f)
+    def wrapper(*a, **k):
+        auth = request.authorization
+        if not auth or auth.username != OWNER_USER or auth.password != OWNER_PASS:
+            return Response('Auth required', 401, {'WWW-Authenticate':'Basic realm="HCO-Owner"'})
+        return f(*a, **k)
+    return wrapper
+
+# ------------------ Flask routes ------------------
+
+@app.route("/")
+def info():
+    base = request.url_root.rstrip("/")
+    return jsonify({
+        "ok": True,
+        "message": "HCO-Phone-Finder (simple single file)",
+        "create_token_example": base + "/new?label=AzharPixel",
+        "owner_ui": base + "/owner (auth)",
+        "public_example": base + "/t/<token>"
+    })
+
+@app.route("/owner")
+@require_auth
+def owner_ui():
+    base = request.url_root.rstrip("/")
+    return f"""
+<html><body style="font-family:system-ui">
+<h2>HCO Owner UI</h2>
+<p>Create token: <code>{base}/new?label=AzharPixel</code></p>
+<p>Tokens: <a href="/tokens">/tokens</a></p>
+<p>Logs (JSON): <a href="/logs">/logs</a></p>
+</body></html>
+"""
+
+@app.route("/new")
+@require_auth
+def new_token():
+    label = request.args.get("label", "device")
+    token = create_token(label)
+    link = url_for("serve_token", token=token, _external=True)
+    return jsonify({"token": token, "label": label, "link": link})
+
+@app.route("/tokens")
+@require_auth
+def tokens():
+    return jsonify(load_tokens())
+
+@app.route("/t/<token>")
+def serve_token(token):
+    toks = load_tokens()
+    if token not in toks:
+        return "Invalid token", 404
+    label = toks[token].get("label","device")
+    # simple page that auto posts fingerprint to /report
+    html = f"""<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Found a phone?</title>
+<style>body{{font-family:system-ui;background:#f8fafc;padding:18px}} .card{{max-width:720px;margin:18px auto;padding:16px;border-radius:10px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.06)}}</style>
+</head><body>
+<div class="card">
+  <h1>Found a phone?</h1>
+  <p>This device appears to belong to <strong>{label}</strong>. Please contact the owner: <a href='mailto:your-email@example.com'>your-email@example.com</a></p>
+  <p style="color:#555;font-size:13px">This page notifies the owner with IP & basic device info when opened.</p>
+  <div id="status">Notified: <span id="not">no</span></div>
+</div>
+<script>
+const token = "{token}";
+function gather(){{
+  const fp = {{
+    ts: new Date().toISOString(),
+    ua: navigator.userAgent || "",
+    platform: navigator.platform || "",
+    language: navigator.language || "",
+    screen: {{w: screen.width, h: screen.height}}
+  }};
+  if (navigator.getBattery){{
+    navigator.getBattery().then(b=>{{ fp.battery = {{charging: b.charging, level: b.level}}; send(fp); }}).catch(e=>send(fp));
+  }} else send(fp);
+}}
+function send(fp){{
+  navigator.sendBeacon && navigator.sendBeacon('/report', JSON.stringify({{token:token, fingerprint:fp}})) || fetch('/report', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{token:token, fingerprint:fp}})}}).then(r=>r.json()).then(j=>{{document.getElementById('not').innerText='yes'}}).catch(e=>{{document.getElementById('not').innerText='error'}})
+}}
+window.addEventListener('load', ()=> setTimeout(gather, 300));
+</script>
+</body></html>"""
+    return html
+
+@app.route("/report", methods=["POST"])
+def report():
+    try:
+        data = request.get_json(force=True)
+    except:
+        return jsonify({"ok": False, "error": "invalid json"}), 400
+    token = data.get("token")
+    toks = load_tokens()
+    label = toks.get(token, {}).get("label","")
+    ip = client_ip(request)
+    ua = request.headers.get("User-Agent","")
+    ts = datetime.datetime.utcnow().isoformat()+"Z"
+    ipinfo = enrich_ip(ip)
+    fp = data.get("fingerprint", {})
+    fp_summary = f"{fp.get('platform','')} | {fp.get('ua','')}" if isinstance(fp, dict) else ""
+    entry = {"timestamp": ts, "token": token, "label": label, "ip": ip, "ip_enrich": ipinfo, "user_agent": ua, "fingerprint": fp, "fingerprint_summary": fp_summary}
+    append_log(entry)
+    return jsonify({"ok": True, "entry": {"ip": ip, "ts": ts}})
+
+@app.route("/logs")
+@require_auth
+def logs():
+    # return last 200 log entries from log files
+    out = []
+    for fname in sorted(os.listdir(LOG_DIR), reverse=True):
+        if fname.startswith("visitors-") and fname.endswith(".json"):
+            path = os.path.join(LOG_DIR, fname)
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line=line.strip()
+                    if not line: continue
+                    try:
+                        out.append(json.loads(line))
+                        if len(out) >= 200:
+                            return jsonify(out)
+                    except:
+                        continue
+    return jsonify(out)
+
+@app.route("/dashboard")
+@require_auth
+def dashboard():
+    base = request.url_root.rstrip("/")
+    return f"""
+<html><body style="font-family:system-ui;padding:12px">
+<h2>HCO Dashboard</h2>
+<p>Local server: {base}</p>
+<p>Public URL (if set): {os.environ.get('CLOUDFLARE_URL') or 'Not set'}</p>
+<p>Use /new?label=NAME to create token, then send the /t/&lt;token&gt; link to the phone.</p>
+</body></html>
+"""
+
+# ---------------- helper CLI launcher (small & simple) ----------------
+
+def get_local_ip():
+    # best-effort local IP
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't need to succeed; just to choose correct interface
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+def clear_screen():
+    os.system("clear" if os.name!="nt" else "cls")
+
+def glitch_countdown():
+    seq=list(range(9,0,-1))
+    clear_screen()
+    print(Fore.YELLOW + "="*56)
+    print(Fore.RED + "  SUBSCRIBE TO UNLOCK HCO PHONE FINDER".center(56))
+    print(Fore.YELLOW + "="*56 + "\n")
     for n in seq:
-        print(Fore.CYAN + Style.BRIGHT + (" " * 25) + f"[ {n} ]")
-        for _ in range(2):
-            line = glitch_line(f"scanning network interfaces... {random.randint(100,999)} packets", 66)
-            print(Fore.MAGENTA + line)
-            time.sleep(0.15)
-        time.sleep(0.45)
-        print("\n")
-    for i in range(3):
-        print(Fore.GREEN + Style.BRIGHT + glitch_line("INITIALIZING LAUNCH SEQUENCE", 60))
-        time.sleep(0.12)
+        print(Fore.CYAN + f"   [ {n} ] " + Fore.MAGENTA + ("scanning..." + "."*random.randint(1,5)))
+        time.sleep(0.6)
+    print()
 
-def try_termux_open(url):
-    if which("termux-open-url"):
+def open_youtube_termux():
+    # try termux-open-url -> am -> webbrowser
+    if shutil_which("termux-open-url"):
         try:
-            subprocess.Popen(["termux-open-url", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(["termux-open-url", YOUTUBE_LINK])
             return True
-        except Exception:
-            return False
-    return False
-
-def try_am_start(url):
-    if which("am"):
+        except:
+            pass
+    if shutil_which("am"):
         try:
-            subprocess.Popen(["am", "start", "-a", "android.intent.action.VIEW", "-d", url],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(["am","start","-a","android.intent.action.VIEW","-d",YOUTUBE_LINK])
             return True
-        except Exception:
-            return False
-    return False
-
-def open_url_fallback(url):
-    if try_termux_open(url):
-        return True
-    if try_am_start(url):
-        return True
-    if which("xdg-open"):
-        try:
-            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
-        except Exception:
+        except:
             pass
     try:
-        webbrowser.open(url, new=2)
+        import webbrowser
+        webbrowser.open(YOUTUBE_LINK, new=2)
         return True
-    except Exception:
+    except:
         return False
 
-def open_youtube():
-    print(Fore.GREEN + "\nOpening YouTube channel (will try app first)...")
-    ok = open_url_fallback(YOUTUBE_LINK)
-    if ok:
-        print(Fore.CYAN + "(YouTube opened; if nothing happened, open this link manually):")
+def shutil_which(name):
+    return shutil.which(name) if hasattr(shutil, "which") else None
+
+def launcher():
+    clear_screen()
+    print(Fore.CYAN + "HCO-Phone-Finder launcher".center(56))
+    print(Fore.CYAN + "-"*56 + "\n")
+    glitch_countdown()
+    print(Fore.GREEN + "Opening YouTube channel (try to open in app)...")
+    ok = open_youtube_termux()
+    if not ok:
+        print(Fore.YELLOW + "Could not auto-open YouTube. Open manually:")
+        print(YOUTUBE_LINK)
     else:
-        print(Fore.RED + "Could not auto-open YouTube. Please open this link manually:")
-    print(Fore.YELLOW + YOUTUBE_LINK)
-
-# --- Cloudflared helpers ---
-
-def ensure_cloudflared_installed():
-    """Check for cloudflared; if missing, try to install via pkg (best-effort)."""
-    if which("cloudflared"):
-        return True
-    print(Fore.YELLOW + "cloudflared not found on system.")
-    # Best-effort attempt to install in Termux
-    if which("pkg"):
-        print(Fore.CYAN + "Attempting: pkg install cloudflared -y (Termux). This may prompt for confirmation or fail)")
-        try:
-            rc = subprocess.call(["pkg", "install", "cloudflared", "-y"])
-            if rc == 0 and which("cloudflared"):
-                print(Fore.GREEN + "cloudflared installed.")
-                return True
-            else:
-                print(Fore.RED + "pkg install cloudflared failed or cloudflared not available in package repo.")
-                return False
-        except Exception:
-            return False
-    else:
-        return False
-
-def start_cloudflared_and_get_url(timeout=30):
-    """
-    Start cloudflared tunnel --url http://127.0.0.1:5000 and read stdout to find the public URL.
-    Returns (process, url) or (None, None) on failure.
-    """
-    if not which("cloudflared"):
-        ok = ensure_cloudflared_installed()
-        if not ok:
-            return None, None
-
-    try:
-        # spawn cloudflared
-        p = subprocess.Popen(CLOUDFLARE_CMD, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-    except Exception as e:
-        print(Fore.RED + f"Failed to start cloudflared: {e}")
-        return None, None
-
-    url = None
-    start = time.time()
-    url_regex = re.compile(r"https://[^\s]+trycloudflare\.com|https://[A-Za-z0-9\-]+\.trycloudflare\.com|https://[^\s]+\.trycloudflare\.com")
-    # also check for any https://... when printed
-    generic_https = re.compile(r"https://[^\s]+")
-    print(Fore.CYAN + "Starting cloudflared tunnel; waiting for public URL (timeout {}s)...".format(timeout))
-    try:
-        # read lines until timeout or url found
-        while True:
-            if time.time() - start > timeout:
-                break
-            line = p.stdout.readline()
-            if not line:
-                # process might have exited or still producing nothing; check poll
-                if p.poll() is not None:
-                    break
-                time.sleep(0.1)
-                continue
-            line = line.strip()
-            # debug print suppressed; only show concise lines
-            # try to find trycloudflare URL
-            m = url_regex.search(line)
-            if m:
-                url = m.group(0)
-                break
-            m2 = generic_https.search(line)
-            if m2:
-                # as a fallback accept first https line (could be about updates, but ok)
-                url = m2.group(0)
-                # don't break immediately if it's something like https://developers.google.com ... but we'll accept
-                break
-            # continue looping
-        if url:
-            print(Fore.GREEN + "Public URL detected: " + url)
-            return p, url
-        else:
-            # didn't find url within timeout
-            print(Fore.YELLOW + "Cloudflared did not produce a public URL within timeout.")
-            # show last few lines from process output for debugging
-            try:
-                # attempt to read remaining output
-                remaining = p.stdout.read(1024)
-                if remaining:
-                    print(Fore.MAGENTA + "cloudflared output (snippet):")
-                    print(remaining.strip())
-            except Exception:
-                pass
-            return p, None
-    except Exception as e:
-        print(Fore.RED + "Error while reading cloudflared output: " + str(e))
-        return p, None
-
-def stop_cloudflared(proc):
-    try:
-        if proc and proc.poll() is None:
-            proc.terminate()
-            time.sleep(0.5)
-            if proc.poll() is None:
-                proc.kill()
-    except Exception:
-        pass
-
-# --- Main lock & flow ---
-
-def lock_and_open_youtube_and_cloudflared():
-    hacker_countdown()
-    open_youtube()
-    print(Fore.MAGENTA + "\nAttempting to start Cloudflared (for public URL). This may take a moment...")
-    global CLOUDFLARE_URL, CLOUDFLARE_PROCESS
-    # if user already provided a URL env var, skip starting
-    if CLOUDFLARE_URL and CLOUDFLARE_URL.strip():
-        print(Fore.GREEN + f"Using existing CLOUDFLARE_URL from environment: {CLOUDFLARE_URL}")
-    else:
-        proc, url = start_cloudflared_and_get_url(timeout=30)
-        CLOUDFLARE_PROCESS = proc
-        if url:
-            CLOUDFLARE_URL = url
-            os.environ[CLOUDFLARE_ENV] = url
-            print(Fore.GREEN + "Cloudflared public URL set automatically: " + url)
-        else:
-            print(Fore.RED + "Could not auto-obtain Cloudflared URL. See instructions after unlocking.")
-    print(Fore.MAGENTA + "\nWhen you're done with YouTube/subscription, return here and press ENTER.")
+        print(Fore.CYAN + "YouTube attempted. Return and press ENTER when ready.")
     try:
         input(Fore.GREEN + "Press ENTER to continue: ")
     except KeyboardInterrupt:
-        print("\nInterrupted. Exiting.")
-        # cleanup
-        stop_cloudflared(CLOUDFLARE_PROCESS)
-        sys.exit(0)
-
-def show_banner_and_cleanup():
-    clear()
-    box_width = 72
+        print("\nExiting launcher.")
+        return
+    # show banner + public link if env provided
+    clear_screen()
     title = "HCO Phone Finder – A Phone Tracking Tool by Azhar"
-    print(Back.BLUE + " " * box_width)
-    print(Back.BLUE + Fore.RED + Style.BRIGHT + title.center(box_width) + Style.RESET_ALL)
-    print(Back.BLUE + " " * box_width + Style.RESET_ALL + "\n")
-    if CLOUDFLARE_URL and CLOUDFLARE_URL.strip():
-        print(Fore.GREEN + "Your public Cloudflare (tunnel) URL (auto-detected):")
-        print(Fore.CYAN + CLOUDFLARE_URL.strip() + "\n")
+    print(Back.BLUE + " " * 60)
+    print(Back.BLUE + Fore.RED + title.center(60))
+    print(Back.BLUE + " " * 60 + Style.RESET_ALL + "\n")
+    pub = os.environ.get("CLOUDFLARE_URL")
+    if pub:
+        print(Fore.GREEN + "Public URL (from CLOUDFLARE_URL env):")
+        print(Fore.CYAN + pub)
     else:
-        print(Fore.YELLOW + "Cloudflare/Public URL not configured or auto-detection failed.")
-        print(Fore.YELLOW + "To create a public tunnel, install cloudflared and run:")
+        ip = get_local_ip()
+        print(Fore.YELLOW + "No public URL set. You can create one with cloudflared or ngrok. Example:")
         print(Fore.CYAN + "  cloudflared tunnel --url http://127.0.0.1:5000")
-        print(Fore.CYAN + "Or set CLOUDFLARE_URL env var with the public URL.")
-        print()
-    print(Fore.MAGENTA + "Tool unlocked. Use responsibly and only on devices you own.")
-    print(Fore.MAGENTA + "Do NOT attempt to confront anyone — hand evidence to police.\n")
-    # keep cloudflared running (if started), but warn
-    if CLOUDFLARE_PROCESS:
-        print(Fore.CYAN + "cloudflared process started in background (PID {}).".format(CLOUDFLARE_PROCESS.pid))
-        print(Fore.CYAN + "To stop it later, run: pkill cloudflared  OR close this Termux session.\n")
+        print(Fore.CYAN + "Then set in Termux: export CLOUDFLARE_URL=\"https://abcd-1234.trycloudflare.com\"")
+        print(Fore.CYAN + f"Local links will work on LAN, e.g. http://{ip}:{PORT}")
+    print("\n" + Fore.MAGENTA + "Tool ready. Create tokens with /new?label=NAME (owner auth).")
 
-def main():
-    clear()
-    print(Fore.CYAN + Style.BRIGHT + "HCO-Phone-Finder (launcher)".center(66))
-    print(Fore.CYAN + "-"*66 + "\n")
-    lock_and_open_youtube_and_cloudflared()
-    show_banner_and_cleanup()
+# -------------------- Run server & simple CLI --------------------
+
+def print_startup_info():
+    ip = get_local_ip()
+    print("\n" + Fore.CYAN + "HCO-Phone-Finder running")
+    print(Fore.CYAN + f"Local: http://127.0.0.1:{PORT}")
+    print(Fore.CYAN + f"LAN:   http://{ip}:{PORT}")
+    if os.environ.get("CLOUDFLARE_URL"):
+        print(Fore.CYAN + "Public (from CLOUDFLARE_URL): " + os.environ.get("CLOUDFLARE_URL"))
+    print(Fore.YELLOW + f"Owner user: {OWNER_USER}  (set OWNER_USER/OWNER_PASS env vars to change)\n")
+    print(Fore.YELLOW + "To create a token (owner auth):")
+    print(Fore.YELLOW + f"  curl -u {OWNER_USER}:{OWNER_PASS} http://127.0.0.1:{PORT}/new?label=MyPhone\n")
 
 if __name__ == "__main__":
+    # Start server in interactive mode: if run in terminal, give option to run launcher first
+    if len(sys.argv) > 1 and sys.argv[1] == "launcher":
+        # run only launcher (not server)
+        launcher()
+        sys.exit(0)
+    # Else run server and print info. User can run launcher in separate termux session: python HCO-Phone-Finder.py launcher
     try:
-        main()
+        print_startup_info()
+        print(Fore.MAGENTA + "Run launcher in another session: python3 HCO-Phone-Finder.py launcher\n")
+        # start Flask app (development server)
+        app.run(host=HOST, port=PORT)
     except Exception as e:
-        print(Fore.RED + "Unexpected error: " + str(e))
-    finally:
-        # don't kill cloudflared automatically if it was successfully started and gave URL
-        # but if it was started and didn't give URL, terminate it to avoid stray process
-        if CLOUDFLARE_PROCESS and (not CLOUDFLARE_URL):
-            stop_cloudflared(CLOUDFLARE_PROCESS)
+        print("Error:", e)
