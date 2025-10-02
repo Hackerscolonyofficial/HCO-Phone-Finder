@@ -1,52 +1,23 @@
 #!/usr/bin/env python3
 """
-HCO-Phone-Finder.py
-Single-file Termux/Linux tool + small Flask server for ethically asking a finder to
-voluntarily share location to help return a lost phone.
-
-Features:
- - Auto-load ~/.hco_phone_finder_env (if present)
- - Auto-detect PUBLIC_URL (env, ~/.hco_public_url, ngrok local API), or prompt to paste and save
- - Termux lock UI with YouTube redirect and 9..1 countdown
- - Flask server public page with clickable public link + "Share my location" button
- - Reports saved to reports.csv and admin page /admin?key=ACCESS_KEY
+HCO-Phone-Finder.py - Auto tunnel edition
+Attempts to auto-detect or auto-start ngrok/cloudflared so you DON'T have to paste PUBLIC_URL.
+Author: Azhar
 """
 
 from __future__ import annotations
-import os, sys, time, csv, datetime, subprocess, platform
+import os, sys, time, csv, datetime, subprocess, platform, shutil, json, socket
+from typing import Optional
 
-# ---------------- AUTO-LOAD ENV FILE ----------------
-home = os.path.expanduser("~")
-env_file = os.path.join(home, ".hco_phone_finder_env")
-if os.path.exists(env_file):
-    try:
-        print(f"Loading environment variables from {env_file} ...")
-        with open(env_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, val = line.split("=", 1)
-                    key = key.strip()
-                    val = val.strip().strip('"').strip("'")
-                    # allow lines like export VAR="value"
-                    if key.startswith("export "):
-                        key = key.split(" ", 1)[1]
-                    os.environ[key] = val
-    except Exception:
-        pass
-
-# ---------------- Optional modules ----------------
+# Optional imports
 try:
     from flask import Flask, request, render_template_string, send_file, abort
     import qrcode
     from PIL import Image
     import requests
 except Exception:
-    # If any import fails, set to None and check before starting server
+    # may be None, checked later
     try:
-        # minimize NameError risk
         Flask
     except NameError:
         Flask = None
@@ -67,108 +38,249 @@ LOGFILE = "reports.csv"
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "5000"))
 
-# ---------------- PUBLIC_URL DETECTION ----------------
-def detect_public_url():
+home = os.path.expanduser("~")
+saved_url_path = os.path.join(home, ".hco_public_url")
+env_file = os.path.join(home, ".hco_phone_finder_env")
+
+# Keep tunnel process alive if we spawn one
+tunnel_proc: Optional[subprocess.Popen] = None
+
+# ---------------- Auto-load env file ----------------
+if os.path.exists(env_file):
+    try:
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key.startswith("export "):
+                        key = key.split(" ", 1)[1]
+                    os.environ[key] = val
+    except Exception:
+        pass
+
+# ---------------- CSV header ----------------
+if not os.path.exists(LOGFILE):
+    with open(LOGFILE, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(["timestamp_utc","ip","user_agent","latitude","longitude","accuracy","client_ts_ms","notes"])
+
+# ---------------- Helpers ----------------
+def find_executable(name: str) -> Optional[str]:
+    """Return full path to executable if in PATH, else None"""
+    path = shutil.which(name)
+    return path
+
+def check_port_open(host: str, port: int, timeout=0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+def try_ngrok_api_once() -> Optional[str]:
+    """Query ngrok local API for tunnels"""
+    if requests is None:
+        return None
+    try:
+        resp = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=1.0)
+        if not resp.ok:
+            return None
+        data = resp.json()
+        for t in data.get("tunnels", []):
+            pu = t.get("public_url")
+            if pu and pu.startswith("http"):
+                return pu.rstrip("/")
+    except Exception:
+        return None
+    return None
+
+def start_ngrok_and_get_url(port: int = PORT, max_wait: float = 8.0) -> Optional[str]:
+    """Start ngrok (if binary available) and try to detect its public URL via API."""
+    global tunnel_proc
+    ngrok_bin = find_executable("ngrok")
+    if not ngrok_bin:
+        return None
+    # start ngrok
+    try:
+        # start ngrok http <port>
+        tunnel_proc = subprocess.Popen([ngrok_bin, "http", str(port)],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except Exception:
+        return None
+    # wait for ngrok to initialise and its API to be available
+    t0 = time.time()
+    while time.time() - t0 < max_wait:
+        # try API
+        url = try_ngrok_api_once()
+        if url:
+            return url
+        time.sleep(0.6)
+    # fallback: try to parse stdout for "url=" or "Forwarding"
+    try:
+        if tunnel_proc and tunnel_proc.stdout:
+            out = tunnel_proc.stdout.read(1024)
+            for line in out.splitlines():
+                if "https://" in line:
+                    # take first https-looking token
+                    for token in line.split():
+                        if token.startswith("https://"):
+                            return token.rstrip("/")
+    except Exception:
+        pass
+    return None
+
+def start_cloudflared_and_get_url(port: int = PORT, max_wait: float = 8.0) -> Optional[str]:
+    """Start cloudflared if available and parse its output for trycloudflare URL."""
+    global tunnel_proc
+    cf_bin = find_executable("cloudflared")
+    if not cf_bin:
+        return None
+    try:
+        # Use --no-autoupdate where available to avoid prompts; some versions accept it.
+        args = [cf_bin, "tunnel", "--url", f"http://localhost:{port}"]
+        # In some cloudflared builds 'tunnel' exists, in some older it's 'access' or 'proxy'. We attempt 'tunnel' first.
+        tunnel_proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except Exception:
+        return None
+    # read output lines and search for https://*.trycloudflare.com or https://*.cloudflareroute.com etc.
+    t0 = time.time()
+    url = None
+    try:
+        while time.time() - t0 < max_wait:
+            if tunnel_proc.stdout is None:
+                break
+            line = tunnel_proc.stdout.readline()
+            if not line:
+                time.sleep(0.3)
+                continue
+            # look for https
+            if "https://" in line:
+                # extract token that looks like url
+                for token in line.split():
+                    if token.startswith("https://"):
+                        url = token.rstrip(",").rstrip()
+                        break
+            if url:
+                break
+    except Exception:
+        pass
+    return url
+
+def detect_public_url_auto() -> str:
+    """Auto-detect or auto-start tunnels. Returns public URL or empty string."""
     # 1) env var
-    env_url = os.environ.get("PUBLIC_URL", "").strip()
-    if env_url:
-        return env_url.rstrip("/")
+    env = os.environ.get("PUBLIC_URL", "").strip()
+    if env:
+        return env.rstrip("/")
 
     # 2) saved file
-    saved_path = os.path.join(home, ".hco_public_url")
     try:
-        if os.path.exists(saved_path):
-            with open(saved_path, "r", encoding="utf-8") as f:
-                url = f.read().strip()
-                if url:
-                    return url.rstrip("/")
+        if os.path.exists(saved_url_path):
+            with open(saved_url_path, "r", encoding="utf-8") as f:
+                u = f.read().strip()
+                if u:
+                    return u.rstrip("/")
     except Exception:
         pass
 
-    # 3) try ngrok API
-    if requests is not None:
+    # 3) try ngrok API (if running)
+    url = try_ngrok_api_once()
+    if url:
+        # save
         try:
-            resp = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=1.2)
-            if resp.ok:
-                data = resp.json()
-                tunnels = data.get("tunnels") or []
-                # prefer https tunnels
-                for t in tunnels:
-                    pu = t.get("public_url")
-                    if pu:
-                        return pu.rstrip("/")
+            with open(saved_url_path, "w", encoding="utf-8") as f: f.write(url)
         except Exception:
             pass
+        return url
 
-    # 4) prompt user once and offer to save
-    try:
-        url = input("\nPUBLIC_URL not found. Start your tunnel (cloudflared/ngrok) and paste the public URL here (or leave blank to skip): ").strip()
-        if not url:
-            return ""
-        url = url.rstrip("/")
-        save = input("Save this URL to ~/.hco_public_url for future runs? (Y/n): ").strip().lower()
-        if save in ("", "y", "yes"):
+    # 4) if ngrok binary exists, start it
+    if find_executable("ngrok"):
+        print("ngrok found — starting ngrok automatically...")
+        url = start_ngrok_and_get_url(PORT, max_wait=10.0)
+        if url:
+            print("Detected ngrok URL:", url)
             try:
-                with open(saved_path, "w", encoding="utf-8") as f:
-                    f.write(url)
-                print(f"Saved public URL to {saved_path}")
+                with open(saved_url_path, "w", encoding="utf-8") as f: f.write(url)
             except Exception:
                 pass
-        return url
-    except Exception:
-        return ""
+            return url
+        else:
+            print("ngrok start attempted but no URL detected.")
 
-PUBLIC_URL = detect_public_url()
+    # 5) try cloudflared
+    if find_executable("cloudflared"):
+        print("cloudflared found — starting cloudflared tunnel automatically...")
+        url = start_cloudflared_and_get_url(PORT, max_wait=12.0)
+        if url:
+            print("Detected cloudflared URL:", url)
+            try:
+                with open(saved_url_path, "w", encoding="utf-8") as f: f.write(url)
+            except Exception:
+                pass
+            return url
+        else:
+            print("cloudflared start attempted but no URL detected.")
 
-# ---------------- CSV Setup ----------------
-if not os.path.exists(LOGFILE):
+    # 6) nothing automated worked — fall back to prompt (rare)
     try:
-        with open(LOGFILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp_utc","ip","user_agent","latitude","longitude","accuracy","client_ts_ms","notes"])
+        url = input("\nPUBLIC_URL not found and automatic start failed. Paste the public URL (or leave blank to skip): ").strip()
+        if url:
+            url = url.rstrip("/")
+            try:
+                with open(saved_url_path, "w", encoding="utf-8") as f: f.write(url)
+            except Exception:
+                pass
+            return url
     except Exception:
         pass
 
-# ---------------- Terminal Helpers ----------------
+    return ""
+
+# ---------------- load PUBLIC_URL ----------------
+PUBLIC_URL = detect_public_url_auto()
+
+# ---------------- Terminal helpers ----------------
 def ansi(text: str, code: str) -> str:
     return f"\033[{code}m{text}\033[0m"
 
-def red_bg_green_text_block(title_lines: list[str]) -> None:
-    for line in title_lines:
-        print("\033[41m\033[1;32m " + line + " \033[0m")
+def red_bg_green_text_block(lines):
+    for l in lines:
+        print("\033[41m\033[1;32m " + l + " \033[0m")
 
-def print_qr_terminal(data: str) -> None:
+def print_qr_terminal(data: str):
     if not data:
-        print("No data to generate QR.")
+        print("No PUBLIC_URL to show as QR.")
         return
     if qrcode is None:
-        print("qrcode library not installed. Install with: pip install qrcode[pil]")
+        print("qrcode not installed. Install: pip install qrcode[pil]")
         print("Link:", data)
         return
     try:
         qr = qrcode.QRCode(border=1)
         qr.add_data(data)
         qr.make(fit=True)
-        matrix = qr.get_matrix()
+        m = qr.get_matrix()
         black = "\033[40m  \033[0m"
         white = "\033[47m  \033[0m"
         border = 2
-        w = len(matrix[0]) + border*2
-        for _ in range(border):
-            print(white * w)
-        for row in matrix:
+        w = len(m[0]) + border*2
+        for _ in range(border): print(white * w)
+        for row in m:
             line = white * border
             for col in row:
                 line += black if col else white
             line += white * border
             print(line)
-        for _ in range(border):
-            print(white * w)
+        for _ in range(border): print(white * w)
     except Exception as e:
-        print("Failed to render QR:", e)
+        print("QR generation failed:", e)
         print("Link:", data)
 
-# ---------------- YouTube Launch ----------------
+# ---------------- YouTube helper ----------------
 def open_youtube_app():
     app_link = f"vnd.youtube://channel/{YT_CHANNEL_ID}" if YT_CHANNEL_ID else None
     try:
@@ -184,13 +296,13 @@ def open_youtube_app():
         import webbrowser
         webbrowser.open(YOUTUBE_URL)
     except Exception:
-        print("Open this URL in your browser or YouTube app:", YOUTUBE_URL)
+        print("Open manually:", YOUTUBE_URL)
 
-# ---------------- Termux Lock Flow ----------------
+# ---------------- Termux lock ----------------
 def termux_lock_flow():
     os.system('clear' if os.name == 'posix' else 'cls')
     print(ansi("Tool is Locked 🔒", "1;31"))
-    print("\nRedirecting to YouTube — please subscribe and click the 🔔 bell icon to unlock.\n")
+    print("\nRedirecting to YouTube — subscribe and click the 🔔 bell icon to unlock.\n")
     for i in range(9, 0, -1):
         print(ansi(str(i), "1;33"), end=" ", flush=True)
         time.sleep(1)
@@ -198,79 +310,28 @@ def termux_lock_flow():
     open_youtube_app()
     input(ansi("\nAfter subscribing/visiting YouTube, press Enter to continue...", "1;37"))
 
-# ---------------- Flask Public Page (template) ----------------
+# ---------------- Flask page ----------------
 PUBLIC_PAGE_HTML = """
 <!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Found a phone — Help return</title>
-<style>
-  body{font-family:system-ui, -apple-system, Roboto, Arial; background:#07111a;color:#e6f6ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-  .card{background:#06121a;padding:20px;border-radius:12px;max-width:720px;width:92%}
-  h1{color:#00ff66;margin:0 0 6px 0}
-  .redbox{background:#ffecec;border:3px solid #d93025;padding:10px;border-radius:8px;display:inline-block}
-  p{color:#cfe9f6}
-  .btn{background:#0b84ff;color:white;padding:10px 14px;border-radius:8px;border:none;font-weight:700;cursor:pointer}
-  .small{color:#98b2c2;font-size:13px}
-  a.link{color:#0b84ff; text-decoration:underline; word-break:break-all;}
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="redbox">
-      <h1>HCO Phone Finder</h1>
-      <div style="color:#007a2e;font-weight:700">A Lost or Stolen Phone Tracker by {{owner}}</div>
-    </div>
-    <p style="margin-top:12px">This device is lost. The owner ({{owner_contact}}) offers a reward to return it.</p>
-    <p class="small">To help return the phone, you can voluntarily share this device’s current location with the owner. No other personal information will be collected.</p>
-    <p class="small">Or open this link directly in your browser: <a href="{{public_url}}" class="link" target="_blank">{{public_url}}</a></p>
-    <div style="margin-top:12px">
-      <button id="shareBtn" class="btn">Share my location</button>
-    </div>
-    <div id="status" style="margin-top:10px;color:#b4eec2"></div>
-    <p style="margin-top:12px" class="small">If you prefer, call the owner directly using the number above.</p>
-  </div>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Found phone</title>
+<style>body{font-family:system-ui,Roboto,Arial;background:#07111a;color:#e6f6ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#06121a;padding:20px;border-radius:12px;max-width:720px;width:92%}.btn{background:#0b84ff;color:white;padding:10px 14px;border-radius:8px;border:none;font-weight:700;cursor:pointer}.small{color:#98b2c2;font-size:13px}a.link{color:#0b84ff;word-break:break-all}</style></head><body>
+<div class="card"><h1 style="color:#00ff66;margin:0 0 6px 0">HCO Phone Finder</h1><div style="color:#007a2e;font-weight:700">A Lost or Stolen Phone Tracker by {{owner}}</div>
+<p style="margin-top:12px">This device is lost. The owner ({{owner_contact}}) offers a reward to return it.</p>
+<p class="small">Or open this link directly: <a href="{{public_url}}" class="link" target="_blank">{{public_url}}</a></p>
+<div style="margin-top:12px"><button id="shareBtn" class="btn">Share my location</button></div>
+<div id="status" style="margin-top:10px;color:#b4eec2"></div>
+<p style="margin-top:12px" class="small">If you prefer, call the owner directly using the number above.</p></div>
 <script>
-const shareBtn = document.getElementById('shareBtn');
-const status = document.getElementById('status');
-shareBtn.addEventListener('click', () => {
-  if (!navigator.geolocation) { status.textContent = "Geolocation not supported by your browser."; return; }
-  shareBtn.disabled = true;
-  shareBtn.textContent = 'Requesting location...';
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    try {
-      const payload = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp };
-      const res = await fetch('/report', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      if (res.ok) {
-        status.textContent = "Thanks — location shared with the owner.";
-        shareBtn.textContent = 'Shared';
-      } else {
-        status.textContent = "Failed to send location.";
-        shareBtn.disabled = false;
-        shareBtn.textContent = 'Share my location';
-      }
-    } catch (e) {
-      status.textContent = "Network error while sending location.";
-      shareBtn.disabled = false;
-      shareBtn.textContent = 'Share my location';
-    }
-  }, (err) => {
-    status.textContent = "Could not get location: " + (err.message || 'permission denied');
-    shareBtn.disabled = false;
-    shareBtn.textContent = 'Share my location';
-  }, { enableHighAccuracy:true, timeout:15000 });
-});
-</script>
-</body>
-</html>
+const shareBtn=document.getElementById('shareBtn'), status=document.getElementById('status');
+shareBtn.addEventListener('click', ()=>{ if(!navigator.geolocation){ status.textContent="Geolocation not supported."; return;} shareBtn.disabled=true; shareBtn.textContent='Requesting location...';
+navigator.geolocation.getCurrentPosition(async (pos)=>{ try{ const payload={latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy,timestamp:pos.timestamp};
+const res=await fetch('/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); if(res.ok){ status.textContent="Thanks — location shared."; shareBtn.textContent='Shared'; } else { status.textContent="Failed to send location."; shareBtn.disabled=false; shareBtn.textContent='Share my location'; } }catch(e){ status.textContent="Network error."; shareBtn.disabled=false; shareBtn.textContent='Share my location'; } }, (err)=>{ status.textContent="Could not get location: "+(err.message||'permission denied'); shareBtn.disabled=false; shareBtn.textContent='Share my location'; }, { enableHighAccuracy:true, timeout:15000 }); });
+</script></body></html>
 """
 
-# ---------------- Flask helpers & server ----------------
 def ensure_flask_available():
     if Flask is None:
-        print("Flask/qrcode/requests not installed. Install with: pip install flask qrcode pillow requests")
+        print("Flask or supporting libraries missing. Install with: pip install flask qrcode pillow requests")
         return False
     return True
 
@@ -281,10 +342,7 @@ def start_flask_server(host=HOST, port=PORT):
 
     @app.route("/")
     def index():
-        html = PUBLIC_PAGE_HTML
-        html = html.replace("{{owner}}", OWNER_NAME)
-        html = html.replace("{{owner_contact}}", OWNER_CONTACT)
-        html = html.replace("{{public_url}}", PUBLIC_URL or "")
+        html = PUBLIC_PAGE_HTML.replace("{{owner}}", OWNER_NAME).replace("{{owner_contact}}", OWNER_CONTACT).replace("{{public_url}}", PUBLIC_URL or "")
         return render_template_string(html)
 
     @app.route("/report", methods=["POST"])
@@ -307,11 +365,10 @@ def start_flask_server(host=HOST, port=PORT):
         ts = datetime.datetime.utcnow().isoformat() + "Z"
         try:
             with open(LOGFILE, "a", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow([ts, ip, ua, latf, lonf, acc, cts, "voluntary_share"])
+                csv.writer(f).writerow([ts, ip, ua, latf, lonf, acc, cts, "voluntary_share"])
         except Exception:
             pass
-        print(f"[{ts}] REPORT from {ip} UA:{ua} lat={latf} lon={lonf} acc={acc} client_ts={cts}")
+        print(f"[{ts}] REPORT from {ip} UA:{ua} lat={latf} lon={lonf} acc={acc}")
         return ("OK", 200)
 
     @app.route("/admin")
@@ -347,7 +404,7 @@ def start_flask_server(host=HOST, port=PORT):
     print(f"Starting Flask server on http://{host}:{port} ...")
     app.run(host=host, port=port)
 
-# ---------------- Main interaction ----------------
+# ---------------- Main ----------------
 def main():
     termux_lock_flow()
     title_lines = ["HCO PHONE FINDER", f"A Lost or Stolen Phone Tracker by {OWNER_NAME}"]
@@ -366,18 +423,27 @@ def main():
                 print("\nPublic link:\n")
                 print(ansi(PUBLIC_URL, "1;36"))
             else:
-                print("\nPUBLIC_URL is not set. Start tunnel (cloudflared/ngrok) and set PUBLIC_URL or let the script prompt you on next run.")
+                print("\nPUBLIC_URL not set.")
         elif choice == "2":
             if PUBLIC_URL:
                 print("\nQR code:\n")
                 print_qr_terminal(PUBLIC_URL)
             else:
-                print("\nPUBLIC_URL not set. Start tunnel and set PUBLIC_URL to generate QR.")
+                print("\nPUBLIC_URL not set.")
         elif choice == "3":
+            if not PUBLIC_URL:
+                print("\nWARNING: PUBLIC_URL is empty — the public page won't be reachable externally until you have a tunnel.")
             print("\nStarting server (Ctrl-C to stop)...\n")
             start_flask_server(HOST, PORT)
         elif choice == "4":
             print("Exiting.")
+            # If we spawned a tunnel process, leave it running or clean up:
+            try:
+                if tunnel_proc and tunnel_proc.poll() is None:
+                    # best-effort terminate
+                    tunnel_proc.terminate()
+            except Exception:
+                pass
             sys.exit(0)
         else:
             print("Invalid choice. Pick 1-4.")
