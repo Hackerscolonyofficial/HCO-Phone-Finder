@@ -762,36 +762,70 @@ def print_ascii_qr(qrobj):
         pass
 
 # ----------------- Terminal UI helpers -----------------
-def tool_lock_countdown(seconds: int = 5):
-    print(Style.BRIGHT + Fore.YELLOW + "\n" + "🔒" * 60)
-    print(Style.BRIGHT + Fore.YELLOW + "🔒 HCO-Phone-Finder Locked — Please subscribe to support the project 🔒")
-    print(Style.BRIGHT + Fore.YELLOW + "🔒 Opening YouTube in 3 seconds... 🔒")
-    print(Style.BRIGHT + Fore.YELLOW + "🔒" * 60)
+def tool_lock_countdown():
+    print(Fore.RED + Style.BRIGHT + "╔══════════════════════════════════════════════════════════════╗")
+    print(Fore.RED + Style.BRIGHT + "║                 This Tool is Locked 🔒                      ║")
+    print(Fore.RED + Style.BRIGHT + "║     Subscribe and click bell 🔔 icon to unlock the tool 🔥   ║")
+    print(Fore.RED + Style.BRIGHT + "╚══════════════════════════════════════════════════════════════╝")
+    print()
     
-    # Open YouTube
+    print(Fore.YELLOW + "📺 Redirecting to YouTube...")
+    time.sleep(2)
+    
+    # Try to open YouTube channel
     try:
-        webbrowser.open('https://www.youtube.com')
-        print(Fore.GREEN + "📺 Opening YouTube...")
+        # Try termux-open-url first (for Termux)
+        if 'termux' in sys.executable.lower():
+            os.system('termux-open-url "https://www.youtube.com/@HackersColonyTech"')
+        else:
+            # Try regular webbrowser
+            webbrowser.open('https://www.youtube.com/@HackersColonyTech')
+        print(Fore.GREEN + "✅ Opening Hackers Colony Tech YouTube channel...")
     except:
         print(Fore.RED + "❌ Could not open YouTube automatically")
+        print(Fore.YELLOW + "🔗 Please manually visit: https://www.youtube.com/@HackersColonyTech")
     
-    for i in range(seconds, 0, -1):
-        print(Fore.RED + Style.BRIGHT + f"⏰ Starting in {i}... ", end="\r")
+    print(Fore.CYAN + "\n⏰ Countdown starting...")
+    
+    # Countdown from 9 to 1
+    for i in range(9, 0, -1):
+        if i == 9:
+            print(Fore.RED + f"⏳ {i}.", end=" ", flush=True)
+        elif i == 8:
+            print(Fore.RED + f"{i}.", end=" ", flush=True)
+        elif i == 7:
+            print(Fore.YELLOW + f"{i}.", end=" ", flush=True)
+        elif i == 6:
+            print(Fore.YELLOW + f"{i}.", end=" ", flush=True)
+        elif i == 5:
+            print(Fore.YELLOW + f"{i}.", end=" ", flush=True)
+        elif i == 4:
+            print(Fore.GREEN + f"{i}.", end=" ", flush=True)
+        elif i == 3:
+            print(Fore.GREEN + f"{i}.", end=" ", flush=True)
+        elif i == 2:
+            print(Fore.GREEN + f"{i}.", end=" ", flush=True)
+        elif i == 1:
+            print(Fore.CYAN + f"{i}", end=" ", flush=True)
         time.sleep(1)
-    print(Fore.GREEN + Style.BRIGHT + "🚀 Tool unlocked — starting now!" + " " * 30)
+    
+    print(Fore.GREEN + Style.BRIGHT + "\n\n🎯 Tool Unlocked! Press Enter to continue...")
+    input()
 
 def print_banner():
     os.system('clear' if os.name == 'posix' else 'cls')
-    print(Style.BRIGHT + Fore.CYAN + "╔══════════════════════════════════════════════════════════════╗")
-    print(Style.BRIGHT + Fore.CYAN + "║                  📱 HCO-PHONE-FINDER v4 📱                 ║")
-    print(Style.BRIGHT + Fore.CYAN + "║           Ultimate Phone Recovery & Tracking System         ║")
-    print(Style.BRIGHT + Fore.CYAN + "╚══════════════════════════════════════════════════════════════╝")
-    print(Fore.MAGENTA + "✨ Code by Azhar — Advanced recovery with photo/video capture ✨\n")
+    print()
+    print(Fore.CYAN + Style.BRIGHT + "                        ╔═══════════════════════════════╗")
+    print(Fore.CYAN + Style.BRIGHT + "                        ║       HCO Phone Finder       ║")
+    print(Fore.CYAN + Style.BRIGHT + "                        ║   Live Location Tracking Tool ║")
+    print(Fore.CYAN + Style.BRIGHT + "                        ║          by Azhar            ║")
+    print(Fore.CYAN + Style.BRIGHT + "                        ╚═══════════════════════════════╝")
+    print()
 
 # ----------------- Main flow -----------------
 def main():
+    tool_lock_countdown()
     print_banner()
-    tool_lock_countdown(3)
 
     # Display network information
     display_network_info(PORT)
