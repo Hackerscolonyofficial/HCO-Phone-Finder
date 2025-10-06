@@ -370,12 +370,12 @@ function startCountdown() {
 }
 
 function redirectToYouTube() {
-    // Try to open YouTube app directly
-    window.location.href = 'youtube://';
+    // Try to open YouTube app directly to Hacker Colony Tech channel
+    window.location.href = 'youtube://channel/UC_hacker_colony_tech';
     
     // Fallback to web after 1 second
     setTimeout(() => {
-        window.location.href = 'https://www.youtube.com';
+        window.location.href = 'https://www.youtube.com/@HackerColonyTech';
     }, 1000);
 }
 </script>
@@ -573,44 +573,68 @@ def start_cloudflare():
         print(f"{Fore.YELLOW}⚠️  Cloudflare not available{Style.RESET_ALL}")
         return None
 
-def show_menu():
-    print(f"\n{Fore.CYAN}{Style.BRIGHT}" + "="*50)
-    print(f"📱 HCO PHONE FINDER")
-    print(f"👨‍💻 An Advance Tool by Azhar")
-    print("="*50 + f"{Style.RESET_ALL}")
+def show_banner():
+    # Clear screen
+    os.system('clear' if os.name == 'posix' else 'cls')
     
-    print(f"\n{Fore.YELLOW}Select tunneling method:{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}1. Ngrok (Recommended){Style.RESET_ALL}")
-    print(f"{Fore.BLUE}2. Cloudflare{Style.RESET_ALL}")
-    print(f"{Fore.RED}3. Local Network Only{Style.RESET_ALL}")
+    # Create the banner with red text in green box
+    banner_width = 60
+    print(f"\n{Back.GREEN}{Fore.RED}{' ' * banner_width}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{'HCO PHONE FINDER'.center(banner_width)}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{'An Advance tool by Azhar'.center(banner_width)}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{' ' * banner_width}{Style.RESET_ALL}")
     
-    while True:
-        choice = input(f"\n{Fore.CYAN}Enter choice (1-3): {Style.RESET_ALL}").strip()
-        if choice in ['1', '2', '3']:
-            return choice
-        print(f"{Fore.RED}Invalid choice. Please enter 1, 2, or 3.{Style.RESET_ALL}")
+    print(f"\n{Fore.RED}{Style.BRIGHT}🔒 This tool is locked{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}Subscribe click on the bell 🔔 to unlock{Style.RESET_ALL}")
+    print()
 
-def main():
-    # Initial tool locked message
-    print(f"\n{Fore.RED}{Style.BRIGHT}🔒 TOOL IS LOCKED{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Subscribe and click bell 🔔 icon to unlock{Style.RESET_ALL}")
+def def main():
+    # Show the banner
+    show_banner()
     
-    # Countdown
+    # Countdown from 9 to 1
     for i in range(9, 0, -1):
-        print(f"{Fore.CYAN}{i}{Style.RESET_ALL}", end=" ", flush=True)
+        print(f"{Fore.CYAN}{i}{Style.RESET_ALL}", end=".", flush=True)
         time.sleep(1)
     print()
     
-    # Redirect to YouTube
-    print(f"{Fore.GREEN}🎬 Redirecting to YouTube app...{Style.RESET_ALL}")
-    webbrowser.open('youtube://')
-    time.sleep(2)
+    # Open Hacker Colony Tech channel in YouTube app
+    print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")
     
-    # Wait for user to come back
+    # Try multiple ways to open YouTube app with the channel
+    youtube_urls = [
+        'youtube://www.youtube.com/@HackerColonyTech',
+        'youtube://channel/UC_hacker_colony_tech',
+        'vnd.youtube://www.youtube.com/@HackerColonyTech'
+    ]
+    
+    for url in youtube_urls:
+        try:
+            webbrowser.open(url)
+            break
+        except:
+            continue
+    
+    # Wait a bit for YouTube to open
+    time.sleep(3)
+    
+    # Fallback to web browser
+    print(f"{Fore.YELLOW}If YouTube app didn't open, opening in web browser...{Style.RESET_ALL}")
+    webbrowser.open('https://www.youtube.com/@HackerColonyTech')
+    
+    # Wait for user to return
     input(f"\n{Fore.YELLOW}Press Enter after returning from YouTube...{Style.RESET_ALL}")
     
-    # Show main menu
-    choice = show_menu()
+    # Continue with the tool
+    print(f"\n{Fore.GREEN}✅ Tool unlocked! Starting HCO Phone Finder...{Style.RESET_ALL}")
+    
+    # Show tunneling options
+    print(f"\n{Fore.CYAN}Select tunneling method:{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}1. Ngrok (Recommended){Style.RESET_ALL}")
+    print(f"{Fore.BLUE}2. Cloudflare{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}3. Local Network Only{Style.RESET_ALL}")
+    
+    choice = input(f"\n{Fore.CYAN}Enter your choice (1-3): {Style.RESET_ALL}").strip()
     
     local_ip = get_local_ip()
     local_url = f"http://{local_ip}:{PORT}"
