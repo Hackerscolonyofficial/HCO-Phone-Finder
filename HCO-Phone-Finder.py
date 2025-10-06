@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HCO-Phone-Finder.py - Tricky Reward System with YouTube Redirect
+HCO-Phone-Finder.py - Tricky Reward System
 Use only for legitimate device recovery purposes.
 """
 from __future__ import annotations
@@ -46,6 +46,53 @@ os.makedirs(GALLERY_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 _received_reports = []
+
+def show_tool_lock_screen():
+    """Show the tool lock screen with countdown"""
+    # Clear screen
+    os.system('clear' if os.name == 'posix' else 'cls')
+    
+    # Create green box with red text
+    banner_width = 60
+    print(f"\n{Back.GREEN}{' ' * banner_width}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{'HCO PHONE FINDER'.center(banner_width)}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{'An Advance tool by Azhar'.center(banner_width)}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{' ' * banner_width}{Style.RESET_ALL}")
+    
+    print(f"\n{Fore.RED}{Style.BRIGHT}🔒 This tool is locked{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}Subscribe click on the bell 🔔 to unlock{Style.RESET_ALL}")
+    print()
+    
+    # Countdown from 9 to 1
+    print(f"{Fore.CYAN}Countdown starting...{Style.RESET_ALL}")
+    for i in range(9, 0, -1):
+        print(f"{Fore.CYAN}{Style.BRIGHT}{i}{Style.RESET_ALL}", end=" ", flush=True)
+        time.sleep(1)
+    print()
+    
+    # Open YouTube channel
+    print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")
+    
+    # Try to open YouTube app with the channel
+    youtube_urls = [
+        'youtube://www.youtube.com/@HackerColonyTech',
+        'vnd.youtube://www.youtube.com/@HackerColonyTech',
+        'https://www.youtube.com/@HackerColonyTech'
+    ]
+    
+    for url in youtube_urls:
+        try:
+            if webbrowser.open(url):
+                print(f"{Fore.GREEN}✅ YouTube app opened!{Style.RESET_ALL}")
+                break
+        except Exception as e:
+            continue
+    
+    # Wait for user to return
+    input(f"\n{Fore.YELLOW}Press Enter after subscribing and clicking bell icon...{Style.RESET_ALL}")
+    
+    print(f"{Fore.GREEN}✅ Tool unlocked! Continuing...{Style.RESET_ALL}")
+    time.sleep(2)
 
 # Tricky Reward HTML
 HTML_PAGE = r"""<!doctype html>
@@ -371,7 +418,7 @@ function startCountdown() {
 
 function redirectToYouTube() {
     // Try to open YouTube app directly to Hacker Colony Tech channel
-    window.location.href = 'youtube://channel/UC_hacker_colony_tech';
+    window.location.href = 'youtube://www.youtube.com/@HackerColonyTech';
     
     // Fallback to web after 1 second
     setTimeout(() => {
@@ -565,7 +612,6 @@ def start_ngrok():
 def start_cloudflare():
     try:
         print(f"{Fore.CYAN}☁️  Starting Cloudflare tunnel...{Style.RESET_ALL}")
-        # This would typically run: cloudflared tunnel --url http://localhost:5000
         print(f"{Fore.GREEN}✅ Cloudflare tunnel ready{Style.RESET_ALL}")
         print(f"{Fore.CYAN}💡 Run manually: cloudflared tunnel --url http://localhost:{PORT}{Style.RESET_ALL}")
         return "cloudflare_ready"
@@ -573,60 +619,9 @@ def start_cloudflare():
         print(f"{Fore.YELLOW}⚠️  Cloudflare not available{Style.RESET_ALL}")
         return None
 
-def show_banner():
-    # Clear screen
-    os.system('clear' if os.name == 'posix' else 'cls')
-    
-    # Create the banner with red text in green box
-    banner_width = 60
-    print(f"\n{Back.GREEN}{Fore.RED}{' ' * banner_width}{Style.RESET_ALL}")
-    print(f"{Back.GREEN}{Fore.RED}{'HCO PHONE FINDER'.center(banner_width)}{Style.RESET_ALL}")
-    print(f"{Back.GREEN}{Fore.RED}{'An Advance tool by Azhar'.center(banner_width)}{Style.RESET_ALL}")
-    print(f"{Back.GREEN}{Fore.RED}{' ' * banner_width}{Style.RESET_ALL}")
-    
-    print(f"\n{Fore.RED}{Style.BRIGHT}🔒 This tool is locked{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Subscribe click on the bell 🔔 to unlock{Style.RESET_ALL}")
-    print()
-
-def def main():
-    # Show the banner
-    show_banner()
-    
-    # Countdown from 9 to 1
-    for i in range(9, 0, -1):
-        print(f"{Fore.CYAN}{i}{Style.RESET_ALL}", end=".", flush=True)
-        time.sleep(1)
-    print()
-    
-    # Open Hacker Colony Tech channel in YouTube app
-    print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")
-    
-    # Try multiple ways to open YouTube app with the channel
-    youtube_urls = [
-        'youtube://www.youtube.com/@HackerColonyTech',
-        'youtube://channel/UC_hacker_colony_tech',
-        'vnd.youtube://www.youtube.com/@HackerColonyTech'
-    ]
-    
-    for url in youtube_urls:
-        try:
-            webbrowser.open(url)
-            break
-        except:
-            continue
-    
-    # Wait a bit for YouTube to open
-    time.sleep(3)
-    
-    # Fallback to web browser
-    print(f"{Fore.YELLOW}If YouTube app didn't open, opening in web browser...{Style.RESET_ALL}")
-    webbrowser.open('https://www.youtube.com/@HackerColonyTech')
-    
-    # Wait for user to return
-    input(f"\n{Fore.YELLOW}Press Enter after returning from YouTube...{Style.RESET_ALL}")
-    
-    # Continue with the tool
-    print(f"\n{Fore.GREEN}✅ Tool unlocked! Starting HCO Phone Finder...{Style.RESET_ALL}")
+def main():
+    # Show tool lock screen first
+    show_tool_lock_screen()
     
     # Show tunneling options
     print(f"\n{Fore.CYAN}Select tunneling method:{Style.RESET_ALL}")
