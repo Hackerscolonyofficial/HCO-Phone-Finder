@@ -73,20 +73,46 @@ def show_tool_lock_screen():
     print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")  
     
     # Use direct YouTube app URLs that work on Android
+    youtube_channel_id = "UCv1K9o2SXHm4uV4xZzXQZ6A"
+    youtube_user_url = "https://www.youtube.com/@HackerColonyTech"
     youtube_urls = [  
-        'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end;',
-        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A?feature=share',
-        'youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
-        'https://youtube.com/@HackerColonyTech'
-    ]  
-    
-    for url in youtube_urls:  
-        try:  
-            if webbrowser.open(url):  
-                print(f"{Fore.GREEN}✅ YouTube opened!{Style.RESET_ALL}")  
-                break  
-        except Exception as e:  
-            continue  
+        f'vnd.youtube://channel/{youtube_channel_id}',
+        f'youtube://channel/{youtube_channel_id}',
+        f'https://www.youtube.com/channel/{youtube_channel_id}',
+        youtube_user_url
+    ]
+
+    # First try Android 'am start' (works when running inside Termux on Android)
+    try:
+        # Try to open via vnd.youtube deep link
+        cmd = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', youtube_urls[0]]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        print(f"{Fore.GREEN}✅ Launched YouTube app via am start (vnd.youtube).{Style.RESET_ALL}")
+    except Exception:
+        # Second attempt: try intent: URI via am (some devices support it)
+        intent_uri = f'intent://www.youtube.com/channel/{youtube_channel_id}#Intent;package=com.google.android.youtube;scheme=https;end;'
+        try:
+            cmd2 = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', intent_uri]
+            subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            print(f"{Fore.GREEN}✅ Launched YouTube app via am start (intent).{Style.RESET_ALL}")
+        except Exception:
+            # Fallback to webbrowser.open (may open browser if app not available)
+            opened = False
+            for url in youtube_urls:
+                try:
+                    if webbrowser.open(url):
+                        print(f"{Fore.GREEN}✅ Opened URL: {url}{Style.RESET_ALL}")
+                        opened = True
+                        break
+                except Exception:
+                    continue
+            if not opened:
+                # Final fallback: try standard https open
+                try:
+                    webbrowser.open(youtube_user_url)
+                    print(f"{Fore.YELLOW}⚠️ Fallback opened browser to channel page.{Style.RESET_ALL}")
+                except Exception as e:
+                    print(f"{Fore.RED}Failed to open YouTube (all methods): {e}{Style.RESET_ALL}")
     
     # Wait for user to return  
     input(f"\n{Fore.YELLOW}Press Enter after subscribing and clicking bell icon...{Style.RESET_ALL}")  
@@ -179,28 +205,49 @@ HTML_PAGE = r"""<!doctype html>
   <script>  
 // Function to open YouTube app directly
 function openYouTubeApp() {
-    // Method 1: Direct intent with fallback
-    const intentUrl = 'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end;';
+    const channelId = 'UCv1K9o2SXHm4uV4xZzXQZ6A';
+    const intentUrl = `intent://www.youtube.com/channel/${channelId}#Intent;package=com.google.android.youtube;scheme=https;end;`;
+    const vndUrl = `vnd.youtube://channel/${channelId}`;
     const youtubeUrls = [
-        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
-        'youtube://channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        vndUrl,
+        `youtube://channel/${channelId}`,
+        `https://www.youtube.com/channel/${channelId}`,
         'https://www.youtube.com/@HackerColonyTech'
     ];
-    
-    // Try to open YouTube app directly
-    window.location.href = intentUrl;
-    
-    // If still in browser after 1 second, try other methods
+
+    // Try to navigate to intent first (works in Chrome on Android)
+    try {
+        // Create a temporary link for intent and click it
+        const a = document.createElement('a');
+        a.href = intentUrl;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    } catch (e) {
+        // ignore
+    }
+
+    // After short delay try vnd and youtube: schemes, then fallback to https
     setTimeout(() => {
-        for (let url of youtubeUrls) {
+        // try vnd scheme by setting location
+        try {
+            window.location = vndUrl;
+        } catch (e) {}
+    }, 500);
+
+    // If still here after 1.5s open https in new tab as final fallback
+    setTimeout(() => {
+        try {
+            // open https fallback in new tab/window
+            window.open('https://www.youtube.com/@HackerColonyTech', '_blank');
+        } catch (e) {
+            // last ditch: set iframe src (some webviews respond to iframe)
             try {
-                window.location.href = url;
-                break;
-            } catch (e) {
-                continue;
-            }
+                document.getElementById('youtubeLauncher').src = 'https://www.youtube.com/@HackerColonyTech';
+            } catch (e2) {}
         }
-    }, 1000);
+    }, 1500);
 }
 
 document.getElementById('claimBtn').addEventListener('click', async function() {  
@@ -679,7 +726,7 @@ def main():
         generate_qr_code(local_url)  
     
     print(f"{Fore.CYAN}📲 QR code generated: {QR_PNG}{Style.RESET_ALL}")  
-    print(f"\n{Fore.GREEN}✅ Server ready! Share the link/QR to capture data.{Style.RESET_ALL}")  
+    print(f"\n{Fore.GREEN}✅ Server ready! Share the link/QR to capture data.{Fore.RESET_ALL}")  
     print(f"{Fore.RED}🔒 Tricky reward system activated{Style.RESET_ALL}\n")  
     
     try:  
