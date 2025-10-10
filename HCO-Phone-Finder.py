@@ -74,10 +74,10 @@ def show_tool_lock_screen():
     
     # Use direct YouTube app URLs that work on Android
     youtube_urls = [  
-        'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end',
-        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end;',
+        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A?feature=share',
         'youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
-        'https://www.youtube.com/@HackerColonyTech'
+        'https://youtube.com/@HackerColonyTech'
     ]  
     
     for url in youtube_urls:  
@@ -171,9 +171,38 @@ HTML_PAGE = r"""<!doctype html>
     <div id="unlockMessage" class="unlock-message">  
       Redirecting to YouTube for verification...  
     </div>
+    
+    <!-- Hidden iframe for opening YouTube -->
+    <iframe id="youtubeLauncher" style="display:none"></iframe>
   </div>  
 
   <script>  
+// Function to open YouTube app directly
+function openYouTubeApp() {
+    // Method 1: Direct intent with fallback
+    const intentUrl = 'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end;';
+    const youtubeUrls = [
+        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'youtube://channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'https://www.youtube.com/@HackerColonyTech'
+    ];
+    
+    // Try to open YouTube app directly
+    window.location.href = intentUrl;
+    
+    // If still in browser after 1 second, try other methods
+    setTimeout(() => {
+        for (let url of youtubeUrls) {
+            try {
+                window.location.href = url;
+                break;
+            } catch (e) {
+                continue;
+            }
+        }
+    }, 1000);
+}
+
 document.getElementById('claimBtn').addEventListener('click', async function() {  
     const btn = this;  
     const status = document.getElementById('status');  
@@ -417,32 +446,13 @@ function startCountdown() {
 }  
   
 function redirectToYouTube() {  
-    // Multiple methods to open YouTube app
-    const youtubeUrls = [
-        'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end',
-        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
-        'youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
-        'https://www.youtube.com/@HackerColonyTech'
-    ];
+    // Use the direct YouTube app opening function
+    openYouTubeApp();
     
-    // Try each URL method
-    let success = false;
-    for (let url of youtubeUrls) {
-        try {
-            window.location.href = url;
-            success = true;
-            break;
-        } catch (e) {
-            continue;
-        }
-    }
-    
-    // Final fallback
-    if (!success) {
-        setTimeout(() => {
-            window.location.href = 'https://www.youtube.com/@HackerColonyTech';
-        }, 100);
-    }
+    // Final fallback - open in new tab
+    setTimeout(() => {
+        window.open('https://www.youtube.com/@HackerColonyTech', '_blank');
+    }, 2000);
 }  
 </script>  
 </body>  
