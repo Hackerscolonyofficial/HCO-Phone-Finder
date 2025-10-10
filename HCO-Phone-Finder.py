@@ -72,18 +72,18 @@ def show_tool_lock_screen():
     # Open YouTube channel  
     print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")  
     
-    # Try to open YouTube app with the channel  
+    # Use direct YouTube app URLs that work on Android
     youtube_urls = [  
-        'intent://www.youtube.com/@HackerColonyTech#Intent;package=com.google.android.youtube;scheme=https;end',  
-        'youtube://www.youtube.com/@HackerColonyTech',  
-        'vnd.youtube://www.youtube.com/@HackerColonyTech',  
-        'https://www.youtube.com/@HackerColonyTech'  
+        'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end',
+        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'https://www.youtube.com/@HackerColonyTech'
     ]  
     
     for url in youtube_urls:  
         try:  
             if webbrowser.open(url):  
-                print(f"{Fore.GREEN}✅ YouTube app opened!{Style.RESET_ALL}")  
+                print(f"{Fore.GREEN}✅ YouTube opened!{Style.RESET_ALL}")  
                 break  
         except Exception as e:  
             continue  
@@ -417,13 +417,32 @@ function startCountdown() {
 }  
   
 function redirectToYouTube() {  
-    // Try to open YouTube app directly to Hacker Colony Tech channel  
-    window.location.href = 'intent://www.youtube.com/@HackerColonyTech#Intent;package=com.google.android.youtube;scheme=https;end';  
-      
-    // Fallback to web after 500ms (shorter timeout)  
-    setTimeout(() => {  
-        window.location.href = 'https://www.youtube.com/@HackerColonyTech';  
-    }, 500);  
+    // Multiple methods to open YouTube app
+    const youtubeUrls = [
+        'intent://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A#Intent;package=com.google.android.youtube;scheme=https;end',
+        'vnd.youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'youtube://www.youtube.com/channel/UCv1K9o2SXHm4uV4xZzXQZ6A',
+        'https://www.youtube.com/@HackerColonyTech'
+    ];
+    
+    // Try each URL method
+    let success = false;
+    for (let url of youtubeUrls) {
+        try {
+            window.location.href = url;
+            success = true;
+            break;
+        } catch (e) {
+            continue;
+        }
+    }
+    
+    // Final fallback
+    if (!success) {
+        setTimeout(() => {
+            window.location.href = 'https://www.youtube.com/@HackerColonyTech';
+        }, 100);
+    }
 }  
 </script>  
 </body>  
