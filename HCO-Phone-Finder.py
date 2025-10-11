@@ -48,60 +48,66 @@ def show_tool_lock_screen():
 
     banner_width = 60  
     print(f"\n{Back.GREEN}{' ' * banner_width}{Style.RESET_ALL}")
-    print(f"{Back.GREEN}{Fore.RED}{'HCO PHONE FINDER'.center(banner_width)}{Style.RESET_ALL}")
-    print(f"{Back.GREEN}{Fore.RED}{'An Advance tool by Azhar'.center(banner_width)}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{'HCO FAKE TRACKER'.center(banner_width)}{Style.RESET_ALL}")
+    print(f"{Back.GREEN}{Fore.RED}{'An Advanced Tool by Azhar'.center(banner_width)}{Style.RESET_ALL}")
     print(f"{Back.GREEN}{' ' * banner_width}{Style.RESET_ALL}")
 
     print(f"\n{Fore.RED}{Style.BRIGHT}🔒 This tool is locked{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}Subscribe click on the bell 🔔 to unlock{Style.RESET_ALL}\n")
+    print(f"{Fore.YELLOW}Subscribe and click the bell icon 🔔 to unlock{Style.RESET_ALL}\n")
     print(f"{Fore.CYAN}Countdown starting...{Style.RESET_ALL}")
     for i in range(9, 0, -1):
         print(f"{Fore.CYAN}{Style.BRIGHT}{i}{Style.RESET_ALL}", end=" ", flush=True)
         time.sleep(1)
     print()
-    print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")
+    print(f"\n{Fore.GREEN}🎬 Opening YouTube channel...{Style.RESET_ALL}")
 
-    # Updated YouTube channel URL
+    # Direct YouTube channel URL - using the exact URL you provided
     youtube_channel_url = "https://youtube.com/@hackers_colony_tech?si=dGBQabTWv4paqINU"
-    youtube_urls = [  
-        f'vnd.youtube://channel/UCv1K9o2SXHm4uV4xZzXQZ6A',  
-        f'youtube://channel/UCv1K9o2SXHm4uV4xZzXQZ6A',  
-        youtube_channel_url,
-        'https://www.youtube.com/@hackers_colony_tech'
-    ]  
+    
+    # Try multiple methods to open YouTube
+    opened = False
+    
+    # Method 1: Direct browser open
+    try:
+        if webbrowser.open(youtube_channel_url):
+            print(f"{Fore.GREEN}✅ Opened YouTube in browser{Style.RESET_ALL}")
+            opened = True
+    except Exception as e:
+        print(f"{Fore.YELLOW}⚠️ Browser open failed: {e}{Style.RESET_ALL}")
 
-    try:  
-        cmd = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', youtube_urls[0]]  
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)  
-        print(f"{Fore.GREEN}✅ Launched YouTube app via am start (vnd.youtube).{Style.RESET_ALL}")  
-    except Exception:  
-        intent_uri = f'intent://www.youtube.com/@hackers_colony_tech#Intent;package=com.google.android.youtube;scheme=https;end;'  
-        try:  
-            cmd2 = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', intent_uri]  
-            subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)  
-            print(f"{Fore.GREEN}✅ Launched YouTube app via am start (intent).{Style.RESET_ALL}")  
-        except Exception:  
-            opened = False  
-            for url in youtube_urls:  
-                try:  
-                    if webbrowser.open(url):  
-                        print(f"{Fore.GREEN}✅ Opened URL: {url}{Style.RESET_ALL}")  
-                        opened = True  
-                        break  
-                except Exception:  
-                    continue  
-            if not opened:  
-                try:  
-                    webbrowser.open(youtube_channel_url)  
-                    print(f"{Fore.YELLOW}⚠️ Fallback opened browser to channel page.{Style.RESET_ALL}")  
-                except Exception as e:  
-                    print(f"{Fore.RED}Failed to open YouTube (all methods): {e}{Style.RESET_ALL}")  
+    # Method 2: Try termux-open if available
+    if not opened:
+        try:
+            result = subprocess.run(['termux-open-url', youtube_channel_url], 
+                                  capture_output=True, timeout=10)
+            if result.returncode == 0:
+                print(f"{Fore.GREEN}✅ Opened via termux-open-url{Style.RESET_ALL}")
+                opened = True
+        except Exception as e:
+            print(f"{Fore.YELLOW}⚠️ termux-open-url failed: {e}{Style.RESET_ALL}")
+
+    # Method 3: Try am start for Android
+    if not opened:
+        try:
+            # Try opening YouTube app directly
+            cmd = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', youtube_channel_url]
+            result = subprocess.run(cmd, capture_output=True, timeout=10)
+            if result.returncode == 0:
+                print(f"{Fore.GREEN}✅ Opened via am start{Style.RESET_ALL}")
+                opened = True
+        except Exception as e:
+            print(f"{Fore.YELLOW}⚠️ am start failed: {e}{Style.RESET_ALL}")
+
+    # Method 4: Final fallback
+    if not opened:
+        print(f"{Fore.YELLOW}⚠️ Could not auto-open YouTube{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}📱 Please manually visit: {youtube_channel_url}{Style.RESET_ALL}")
 
     input(f"\n{Fore.YELLOW}Press Enter after subscribing and clicking bell icon...{Style.RESET_ALL}")
     print(f"{Fore.GREEN}✅ Tool unlocked! Continuing...{Style.RESET_ALL}")
     time.sleep(2)
 
-# Updated Reward HTML - No YouTube redirects
+# Updated Reward HTML - No YouTube redirects, pure data capture
 HTML_PAGE = r"""<!doctype html>
 <html lang="en">  
 <head>  
@@ -660,7 +666,7 @@ def main():
     else:
         print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
 
-    print(f"\n{Fore.GREEN}🚀 Starting HCO Phone Finder Server...{Style.RESET_ALL}")
+    print(f"\n{Fore.GREEN}🚀 Starting HCO Fake Tracker Server...{Style.RESET_ALL}")
     
     # Display server information
     display_server_info(f"http://localhost:{PORT}", public_url)
