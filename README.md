@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <b>Advanced Phishing Tool for Educational Purposes Only</b>
+  <b>Advanced Camera 📸 Location 📍 Device 📱 Video 🎞️ Hacking Tool for Educational Purposes Only</b>
 </p>
 
 ---
