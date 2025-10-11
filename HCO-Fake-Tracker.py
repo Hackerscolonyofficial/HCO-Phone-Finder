@@ -54,7 +54,6 @@ def show_tool_lock_screen():
     print(f"\n{Back.RED}{Fore.WHITE}{' 🔒 TOOL IS LOCKED ':=^60}{Style.RESET_ALL}")
     print(f"\n{Fore.YELLOW}📱 Subscribe & click the bell 🔔 icon to unlock{Style.RESET_ALL}")
     
-    # Quick countdown
     for i in range(3, 0, -1):
         print(f"{Fore.RED}⏳ {i}{Style.RESET_ALL}", end=" ", flush=True)
         time.sleep(1)
@@ -71,10 +70,131 @@ def show_tool_lock_screen():
     print(f"{Fore.GREEN}✅ Tool unlocked!{Style.RESET_ALL}")
     time.sleep(1)
 
-def install_ngrok():
-    """Install ngrok with better methods"""
+def install_cloudflared():
+    """Install and setup cloudflared properly"""
     try:
         # Check if already installed
+        result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ cloudflared is already installed{Style.RESET_ALL}")
+            return True
+    except:
+        pass
+    
+    print(f"{Fore.YELLOW}📥 Installing cloudflared...{Style.RESET_ALL}")
+    
+    try:
+        # Method 1: Termux package
+        result = subprocess.run(['pkg', 'install', 'cloudflared', '-y'], 
+                              capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            # Verify installation
+            try:
+                subprocess.run(['cloudflared', '--version'], capture_output=True, timeout=10)
+                print(f"{Fore.GREEN}✅ cloudflared installed successfully{Style.RESET_ALL}")
+                return True
+            except:
+                pass
+    except:
+        pass
+    
+    try:
+        # Method 2: Direct download
+        print(f"{Fore.YELLOW}📥 Trying direct download...{Style.RESET_ALL}")
+        arch = subprocess.run(['uname', '-m'], capture_output=True, text=True).stdout.strip()
+        
+        if 'aarch64' in arch or 'arm64' in arch:
+            download_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
+        else:
+            download_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm"
+        
+        subprocess.run(['curl', '-L', '-o', 'cloudflared', download_url], 
+                      capture_output=True, timeout=60)
+        subprocess.run(['chmod', '+x', 'cloudflared'], capture_output=True)
+        subprocess.run(['mv', 'cloudflared', '/data/data/com.termux/files/usr/bin/'], capture_output=True)
+        
+        # Verify
+        result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ cloudflared installed successfully{Style.RESET_ALL}")
+            return True
+            
+    except Exception as e:
+        print(f"{Fore.RED}❌ cloudflared installation failed: {e}{Style.RESET_ALL}")
+    
+    return False
+
+def start_cloudflare_tunnel():
+    """Start Cloudflare tunnel and get public URL"""
+    global public_url
+    
+    print(f"{Fore.CYAN}🚀 Starting CLOUDFLARE tunnel...{Style.RESET_ALL}")
+    
+    # Kill any existing cloudflared processes
+    subprocess.run(['pkill', '-f', 'cloudflared'], capture_output=True)
+    time.sleep(2)
+    
+    try:
+        # Start cloudflared with specific parameters for better reliability
+        process = subprocess.Popen([
+            'cloudflared', 'tunnel',
+            '--url', f'http://localhost:{PORT}',
+            '--metrics', 'localhost:49539',
+            '--logfile', 'cloudflared.log',
+            '--loglevel', 'info'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        print(f"{Fore.YELLOW}⏳ Waiting for Cloudflare tunnel (25 seconds)...{Style.RESET_ALL}")
+        time.sleep(25)
+        
+        # Try multiple methods to get the URL
+        max_attempts = 12
+        for attempt in range(max_attempts):
+            print(f"{Fore.CYAN}🔄 Attempt {attempt + 1}/{max_attempts} to get Cloudflare URL...{Style.RESET_ALL}")
+            
+            # Method 1: Check stderr for URL
+            try:
+                line = process.stderr.readline()
+                if line:
+                    print(f"{Fore.BLUE}📡 Cloudflared: {line.strip()}{Style.RESET_ALL}")
+                    
+                    # Look for URL in the output
+                    import re
+                    urls = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+                    if urls:
+                        public_url = urls[0]
+                        print(f"{Fore.GREEN}✅ CLOUDFLARE PUBLIC URL: {public_url}{Style.RESET_ALL}")
+                        return public_url
+            except:
+                pass
+            
+            # Method 2: Check log file
+            try:
+                if os.path.exists('cloudflared.log'):
+                    with open('cloudflared.log', 'r') as f:
+                        content = f.read()
+                        import re
+                        urls = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', content)
+                        if urls:
+                            public_url = urls[0]
+                            print(f"{Fore.GREEN}✅ CLOUDFLARE PUBLIC URL: {public_url}{Style.RESET_ALL}")
+                            return public_url
+            except:
+                pass
+            
+            time.sleep(2)
+        
+        print(f"{Fore.YELLOW}⚠️ Cloudflare tunnel started but URL not captured{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}💡 Check cloudflared.log for details{Style.RESET_ALL}")
+        return "cloudflare_tunnel_active"
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ Cloudflare tunnel error: {e}{Style.RESET_ALL}")
+        return None
+
+def install_ngrok():
+    """Install ngrok"""
+    try:
         result = subprocess.run(['ngrok', '--version'], capture_output=True, text=True)
         if result.returncode == 0:
             return True
@@ -83,76 +203,37 @@ def install_ngrok():
     
     print(f"{Fore.YELLOW}📥 Installing ngrok...{Style.RESET_ALL}")
     
-    methods = [
-        ['pkg', 'install', 'ngrok', '-y'],
-        ['apt', 'install', 'ngrok', '-y'],
-        ['pkg', 'update', '&&', 'pkg', 'install', 'ngrok', '-y']
-    ]
-    
-    for method in methods:
-        try:
-            print(f"{Fore.CYAN}🔄 Trying: {' '.join(method)}{Style.RESET_ALL}")
-            result = subprocess.run(method, capture_output=True, text=True, timeout=120)
-            if result.returncode == 0:
-                # Verify installation
-                try:
-                    subprocess.run(['ngrok', '--version'], capture_output=True, timeout=10)
-                    print(f"{Fore.GREEN}✅ ngrok installed successfully{Style.RESET_ALL}")
-                    return True
-                except:
-                    continue
-        except:
-            continue
-    
-    print(f"{Fore.RED}❌ Failed to install ngrok{Style.RESET_ALL}")
-    return False
-
-def install_cloudflared():
-    """Install cloudflared"""
     try:
-        result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return True
-    except:
-        pass
-    
-    print(f"{Fore.YELLOW}📥 Installing cloudflared...{Style.RESET_ALL}")
-    
-    try:
-        result = subprocess.run(['pkg', 'install', 'cloudflared', '-y'], 
+        result = subprocess.run(['pkg', 'install', 'ngrok', '-y'], 
                               capture_output=True, text=True, timeout=120)
         if result.returncode == 0:
-            print(f"{Fore.GREEN}✅ cloudflared installed{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}✅ ngrok installed{Style.RESET_ALL}")
             return True
     except:
         pass
     
-    print(f"{Fore.RED}❌ Failed to install cloudflared{Style.RESET_ALL}")
     return False
 
 def start_ngrok_tunnel():
-    """Start ngrok and get public URL"""
+    """Start ngrok tunnel"""
     global public_url
     
     print(f"{Fore.CYAN}🚀 Starting NGROK tunnel...{Style.RESET_ALL}")
     
-    # Kill existing ngrok
     subprocess.run(['pkill', '-f', 'ngrok'], capture_output=True)
     time.sleep(2)
     
     try:
-        # Start ngrok in background
         process = subprocess.Popen([
             'ngrok', 'http', str(PORT),
             '--log=stdout',
             '--region=us'
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
-        print(f"{Fore.YELLOW}⏳ Waiting for ngrok (15 seconds)...{Style.RESET_ALL}")
-        time.sleep(15)
+        print(f"{Fore.YELLOW}⏳ Waiting for ngrok (20 seconds)...{Style.RESET_ALL}")
+        time.sleep(20)
         
-        # Get URL from ngrok API
-        for attempt in range(8):
+        for attempt in range(10):
             try:
                 response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
                 if response.status_code == 200:
@@ -160,7 +241,7 @@ def start_ngrok_tunnel():
                     for tunnel in data.get('tunnels', []):
                         if tunnel['proto'] == 'https':
                             public_url = tunnel['public_url']
-                            print(f"{Fore.GREEN}✅ NGROK URL: {public_url}{Style.RESET_ALL}")
+                            print(f"{Fore.GREEN}✅ NGROK PUBLIC URL: {public_url}{Style.RESET_ALL}")
                             return public_url
             except:
                 pass
@@ -173,48 +254,6 @@ def start_ngrok_tunnel():
         print(f"{Fore.RED}❌ Ngrok error: {e}{Style.RESET_ALL}")
         return None
 
-def start_cloudflare_tunnel():
-    """Start Cloudflare tunnel"""
-    global public_url
-    
-    print(f"{Fore.CYAN}🚀 Starting CLOUDFLARE tunnel...{Style.RESET_ALL}")
-    
-    subprocess.run(['pkill', '-f', 'cloudflared'], capture_output=True)
-    time.sleep(2)
-    
-    try:
-        # Start cloudflared
-        process = subprocess.Popen([
-            'cloudflared', 'tunnel', 
-            '--url', f'http://localhost:{PORT}',
-            '--metrics', 'localhost:49539'
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
-        print(f"{Fore.YELLOW}⏳ Waiting for Cloudflare (20 seconds)...{Style.RESET_ALL}")
-        time.sleep(20)
-        
-        # Try to get URL from output
-        for _ in range(10):
-            try:
-                line = process.stderr.readline()
-                if '.trycloudflare.com' in line:
-                    import re
-                    urls = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
-                    if urls:
-                        public_url = urls[0]
-                        print(f"{Fore.GREEN}✅ CLOUDFLARE URL: {public_url}{Style.RESET_ALL}")
-                        return public_url
-            except:
-                pass
-            time.sleep(2)
-        
-        print(f"{Fore.YELLOW}⚠️ Cloudflare tunnel started but URL not captured{Style.RESET_ALL}")
-        return "cloudflare_active"
-        
-    except Exception as e:
-        print(f"{Fore.RED}❌ Cloudflare error: {e}{Style.RESET_ALL}")
-        return None
-
 def start_localhost_run():
     """Start localhost.run tunnel"""
     global public_url
@@ -222,131 +261,123 @@ def start_localhost_run():
     print(f"{Fore.CYAN}🚀 Starting LOCALHOST.RUN tunnel...{Style.RESET_ALL}")
     
     try:
-        # Start localhost.run with timeout
+        # Start with specific parameters
         result = subprocess.run([
             'ssh', '-o', 'StrictHostKeyChecking=no',
             '-o', 'ConnectTimeout=30',
+            '-o', 'ServerAliveInterval=60',
+            '-o', 'ServerAliveCountMax=3',
             '-R', '80:localhost:5000',
             'nokey@localhost.run'
-        ], capture_output=True, text=True, timeout=25)
+        ], capture_output=True, text=True, timeout=30)
         
         output = result.stdout + result.stderr
+        print(f"{Fore.BLUE}📡 Localhost.run output:{Style.RESET_ALL}")
+        print(output)
         
         # Extract URL
         import re
         urls = re.findall(r'https://[a-zA-Z0-9-]+\.localhost\.run', output)
         if urls:
             public_url = urls[0]
-            print(f"{Fore.GREEN}✅ LOCALHOST.RUN URL: {public_url}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}✅ LOCALHOST.RUN PUBLIC URL: {public_url}{Style.RESET_ALL}")
             return public_url
         else:
-            print(f"{Fore.YELLOW}⚠️ Could not extract URL from output{Style.RESET_ALL}")
-            return None
-            
+            # Try alternative pattern
+            urls = re.findall(r'https://[a-zA-Z0-9-]+\.[a-zA-Z0-9-]+\.localhost\.run', output)
+            if urls:
+                public_url = urls[0]
+                print(f"{Fore.GREEN}✅ LOCALHOST.RUN PUBLIC URL: {public_url}{Style.RESET_ALL}")
+                return public_url
+        
+        print(f"{Fore.YELLOW}⚠️ Could not extract URL from output{Style.RESET_ALL}")
+        return None
+        
     except subprocess.TimeoutExpired:
-        print(f"{Fore.YELLOW}⚠️ localhost.run timeout - checking if it worked...{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}⚠️ localhost.run timeout - may still be working{Style.RESET_ALL}")
         return "localhost_timeout"
     except Exception as e:
         print(f"{Fore.RED}❌ localhost.run error: {e}{Style.RESET_ALL}")
         return None
 
-def start_serveo():
-    """Start serveo tunnel"""
+def start_bore_cli():
+    """Start bore.pub tunnel (new reliable service)"""
     global public_url
     
-    print(f"{Fore.CYAN}🚀 Starting SERVEO tunnel...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🚀 Starting BORE.PUB tunnel...{Style.RESET_ALL}")
     
     try:
+        # Install bore-cli if not present
+        try:
+            subprocess.run(['cargo', 'install', 'bore-cli'], capture_output=True, timeout=60)
+        except:
+            # Try direct download
+            subprocess.run(['curl', '-fsSL', 'https://github.com/ekzhang/bore/raw/main/bin/bore', '-o', 'bore'], 
+                         capture_output=True, timeout=30)
+            subprocess.run(['chmod', '+x', 'bore'], capture_output=True)
+            subprocess.run(['mv', 'bore', '/data/data/com.termux/files/usr/bin/'], capture_output=True)
+        
+        # Start bore tunnel
         result = subprocess.run([
-            'ssh', '-o', 'StrictHostKeyChecking=no',
-            '-o', 'ConnectTimeout=20', 
-            '-R', '80:localhost:5000',
-            'serveo.net'
-        ], capture_output=True, text=True, timeout=25)
+            'bore', 'local', str(PORT), '--to', 'bore.pub'
+        ], capture_output=True, text=True, timeout=30)
         
         output = result.stdout + result.stderr
+        print(f"{Fore.BLUE}📡 Bore output: {output}{Style.RESET_ALL}")
         
         import re
-        urls = re.findall(r'https://[a-zA-Z0-9-]+\.serveo\.net', output)
+        urls = re.findall(r'https://[a-zA-Z0-9-]+\.bore\.pub', output)
         if urls:
             public_url = urls[0]
-            print(f"{Fore.GREEN}✅ SERVEO URL: {public_url}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}✅ BORE.PUB PUBLIC URL: {public_url}{Style.RESET_ALL}")
             return public_url
+        
         return None
         
     except Exception as e:
-        print(f"{Fore.RED}❌ Serveo error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Bore.pub error: {e}{Style.RESET_ALL}")
         return None
 
-def start_localtonet():
-    """Start localtonet tunnel"""
+def get_public_url_guaranteed():
+    """Get public URL with guaranteed success"""
     global public_url
     
-    print(f"{Fore.CYAN}🚀 Starting LOCALTONET tunnel...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'🚀 CREATING PUBLIC WAN TUNNEL ':=^60}{Style.RESET_ALL}")
     
-    try:
-        result = subprocess.run([
-            'ssh', '-o', 'StrictHostKeyChecking=no',
-            '-o', 'ConnectTimeout=20',
-            '-R', 'hco-tracker:80:localhost:5000',
-            'ssh.localtonet.com'
-        ], capture_output=True, text=True, timeout=25)
-        
-        output = result.stdout + result.stderr
-        print(f"{Fore.CYAN}📡 Localtonet output: {output}{Style.RESET_ALL}")
-        
-        # Localtonet usually shows URL in format: https://hco-tracker-xxxx.localtonet.com
-        import re
-        urls = re.findall(r'https://[a-zA-Z0-9-]+\.localtonet\.com', output)
-        if urls:
-            public_url = urls[0]
-            print(f"{Fore.GREEN}✅ LOCALTONET URL: {public_url}{Style.RESET_ALL}")
-            return public_url
-        return None
-        
-    except Exception as e:
-        print(f"{Fore.RED}❌ Localtonet error: {e}{Style.RESET_ALL}")
-        return None
-
-def get_public_url_force():
-    """Force get public URL using multiple services"""
-    global public_url
+    # Try Cloudflare first (most reliable)
+    print(f"\n{Fore.YELLOW}🔄 PRIMARY: Trying Cloudflare tunnel...{Style.RESET_ALL}")
+    if install_cloudflared():
+        result = start_cloudflare_tunnel()
+        if result and result not in ["cloudflare_tunnel_active"]:
+            return result, "CLOUDFLARE"
+        elif result == "cloudflare_tunnel_active":
+            print(f"{Fore.GREEN}✅ Cloudflare tunnel is active!{Style.RESET_ALL}")
+            # Even if we didn't get URL, tunnel is running
     
-    print(f"{Fore.CYAN}{'🚀 FORCING WAN TUNNEL CREATION ':=^60}{Style.RESET_ALL}")
+    # Try localhost.run second
+    print(f"\n{Fore.YELLOW}🔄 SECONDARY: Trying localhost.run...{Style.RESET_ALL}")
+    result = start_localhost_run()
+    if result and result not in ["localhost_timeout"]:
+        return result, "LOCALHOST.RUN"
     
-    # List of tunnel methods to try
-    tunnel_methods = [
-        ("NGROK", start_ngrok_tunnel),
-        ("LOCALHOST.RUN", start_localhost_run), 
-        ("SERVEO", start_serveo),
-        ("LOCALTONET", start_localtonet),
-        ("CLOUDFLARE", start_cloudflare_tunnel)
-    ]
+    # Try ngrok third
+    print(f"\n{Fore.YELLOW}🔄 TERTIARY: Trying ngrok...{Style.RESET_ALL}")
+    if install_ngrok():
+        result = start_ngrok_tunnel()
+        if result:
+            return result, "NGROK"
     
-    # Try each method until we get a public URL
-    for service_name, tunnel_func in tunnel_methods:
-        print(f"\n{Fore.YELLOW}🔄 Trying {service_name}...{Style.RESET_ALL}")
-        
-        # Install required service first
-        if service_name == "NGROK":
-            if not install_ngrok():
-                continue
-        elif service_name == "CLOUDFLARE":
-            if not install_cloudflared():
-                continue
-        
-        result = tunnel_func()
-        if result and result not in ["cloudflare_active", "localhost_timeout"]:
-            return result, service_name
-        elif result in ["cloudflare_active", "localhost_timeout"]:
-            print(f"{Fore.YELLOW}⚠️ {service_name} started but URL not captured{Style.RESET_ALL}")
-            continue
+    # Try bore.pub as last resort
+    print(f"\n{Fore.YELLOW}🔄 LAST RESORT: Trying bore.pub...{Style.RESET_ALL}")
+    result = start_bore_cli()
+    if result:
+        return result, "BORE.PUB"
     
-    # If all tunnels fail, return local IP
+    # If all fail, use local IP
     local_ip = get_local_ip()
     local_url = f"http://{local_ip}:{PORT}"
     print(f"{Fore.RED}❌ ALL TUNNELS FAILED! Using local URL{Style.RESET_ALL}")
-    return local_url, "local"
+    return local_url, "LOCAL"
 
 def display_banner():
     """Display banner"""
@@ -398,10 +429,10 @@ def test_url(url):
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            print(f"{Fore.GREEN}✅ URL accessible!{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}✅ URL accessible from anywhere!{Style.RESET_ALL}")
             return True
     except:
-        print(f"{Fore.YELLOW}⚠️ URL test failed{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}⚠️ URL test failed - but tunnel might still work{Style.RESET_ALL}")
     return False
 
 # HTML template (same as before)
@@ -749,10 +780,10 @@ def main():
     display_banner()
     
     print(f"\n{Back.GREEN}{Fore.WHITE}{'🚀 WAN TUNNEL OPTIONS ':=^60}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}1. Auto (Try all tunnels){Style.RESET_ALL}")
-    print(f"{Fore.CYAN}2. Ngrok Only{Style.RESET_ALL}")
-    print(f"{Fore.BLUE}3. Localhost.run Only{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}4. Serveo Only{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}1. Auto (Recommended - Try all tunnels){Style.RESET_ALL}")
+    print(f"{Fore.CYAN}2. Cloudflare Only (Most Reliable){Style.RESET_ALL}")
+    print(f"{Fore.BLUE}3. Ngrok Only{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}4. Localhost.run Only{Style.RESET_ALL}")
     print(f"{Back.GREEN}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
     
     choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-4): {Style.RESET_ALL}").strip()
@@ -761,31 +792,33 @@ def main():
     service_name = "Unknown"
     
     if choice == '1':
-        # Auto - try all
-        final_url, service_name = get_public_url_force()
+        # Auto - try all with Cloudflare as primary
+        final_url, service_name = get_public_url_guaranteed()
     elif choice == '2':
+        # Cloudflare only
+        if install_cloudflared():
+            final_url = start_cloudflare_tunnel()
+            service_name = "CLOUDFLARE"
+    elif choice == '3':
         # Ngrok only
         if install_ngrok():
             final_url = start_ngrok_tunnel()
             service_name = "NGROK"
-    elif choice == '3':
+    elif choice == '4':
         # Localhost.run only
         final_url = start_localhost_run()
         service_name = "LOCALHOST.RUN"
-    elif choice == '4':
-        # Serveo only
-        final_url = start_serveo()
-        service_name = "SERVEO"
     else:
         # Default to auto
-        final_url, service_name = get_public_url_force()
+        final_url, service_name = get_public_url_guaranteed()
     
     # Fallback to local if no public URL
-    if not final_url or final_url in ["cloudflare_active", "localhost_timeout"]:
+    if not final_url or final_url in ["cloudflare_tunnel_active", "localhost_timeout"]:
         local_ip = get_local_ip()
         final_url = f"http://{local_ip}:{PORT}"
         service_name = "LOCAL"
         print(f"{Fore.RED}❌ Using local URL (only same WiFi){Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}💡 Try installing manually: pkg install cloudflared{Style.RESET_ALL}")
     
     print(f"\n{Fore.GREEN}{' SERVER READY ':=^60}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}🌐 Final URL: {final_url}{Style.RESET_ALL}")
