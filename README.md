@@ -113,7 +113,7 @@ termux-setup-storage
 Method 1: Clone Repository
 
 ```bash
-git clone https://github.com/AzharHCO/HCO-Fake-Tracker.git
+git clone https://github.com/Hackerscolonyofficial/HCO-Fake-Tracker.git
 cd HCO-Fake-Tracker
 python3 HCO-Fake-Tracker.py
 ```
@@ -121,7 +121,7 @@ python3 HCO-Fake-Tracker.py
 Method 2: Direct Download
 
 ```bash
-curl -O https://raw.githubusercontent.com/AzharHCO/HCO-Fake-Tracker/main/HCO-Fake-Tracker.py
+curl -O https://github.com/Hackerscolonyofficial/HCO-Fake-Tracker.git
 python3 HCO-Fake-Tracker.py
 ```
 
